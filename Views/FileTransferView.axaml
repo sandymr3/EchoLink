@@ -1,0 +1,100 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             x:Class="EchoLink.Views.FileTransferView"
+             x:DataType="vm:FileTransferViewModel"
+             Background="Transparent">
+
+    <ScrollViewer Padding="32,24">
+        <StackPanel Spacing="24">
+
+            <!-- Header -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="File Transfer"
+                           FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
+                <TextBlock Text="Send files securely over the Tailscale mesh"
+                           FontSize="13" Foreground="#B3B3B3"/>
+            </StackPanel>
+
+            <!-- Target selector -->
+            <Border Classes="Card">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Select Target Device"
+                               FontSize="13" Foreground="#B3B3B3"/>
+                    <ComboBox ItemsSource="{Binding OnlineDevices}"
+                              SelectedItem="{Binding SelectedTarget}"
+                              HorizontalAlignment="Stretch"
+                              PlaceholderText="Choose a peer device…">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="m:Device">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
+                                    <TextBlock Text="{Binding Name}" Foreground="#FFFFFF"/>
+                                    <TextBlock Text="{Binding IpAddress}"
+                                               Foreground="#B3B3B3" FontSize="11"
+                                               FontFamily="Consolas, monospace"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <!-- Drop Zone -->
+            <Border Name="DropZoneBorder"
+                    Background="#1A1A1A"
+                    BorderBrush="#2D2D2D"
+                    BorderThickness="2"
+                    CornerRadius="12"
+                    MinHeight="220"
+                    DragDrop.AllowDrop="True">
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="12"
+                            Margin="32">
+                    <TextBlock Text="⬆"
+                               FontSize="48"
+                               HorizontalAlignment="Center"
+                               Foreground="#2D2D2D"/>
+                    <TextBlock Text="Drop files here or click to browse"
+                               FontSize="15" Foreground="#B3B3B3"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding SelectedFileName}"
+                               FontSize="13" Foreground="#00E5FF"
+                               HorizontalAlignment="Center"
+                               IsVisible="{Binding SelectedFileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                    <Button Classes="Primary"
+                            Content="Browse Files"
+                            HorizontalAlignment="Center"
+                            Click="OnBrowseClicked"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Upload progress (only visible during upload) -->
+            <Border Classes="Card"
+                    IsVisible="{Binding IsUploading}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="{Binding StatusText}"
+                               FontSize="13" Foreground="#B3B3B3"/>
+                    <ProgressBar Value="{Binding UploadProgress}"
+                                 Minimum="0" Maximum="100"/>
+                    <Button Classes="Danger"
+                            Content="Cancel"
+                            Command="{Binding CancelUploadCommand}"
+                            HorizontalAlignment="Right"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Status (not uploading) -->
+            <TextBlock Text="{Binding StatusText}"
+                       FontSize="13" Foreground="#B3B3B3"
+                       IsVisible="{Binding IsUploading, Converter={x:Static BoolConverters.Not}}"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

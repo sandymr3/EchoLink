@@ -1,0 +1,126 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             x:Class="EchoLink.Views.ClipboardView"
+             x:DataType="vm:ClipboardViewModel"
+             Background="Transparent">
+
+    <DockPanel Margin="32,24">
+
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,20">
+            <TextBlock Text="Clipboard Hub"
+                       FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
+            <TextBlock Text="Sync clipboard entries across all mesh devices"
+                       FontSize="13" Foreground="#B3B3B3"/>
+        </StackPanel>
+
+        <!-- Controls card -->
+        <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">
+            <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto">
+                <!-- Auto-sync toggle -->
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal" Spacing="12"
+                            VerticalAlignment="Center">
+                    <ToggleSwitch IsChecked="{Binding IsAutoSyncEnabled}"
+                                  OnContent="Auto-Sync ON"
+                                  OffContent="Auto-Sync OFF"
+                                  Foreground="#FFFFFF"/>
+                </StackPanel>
+
+                <!-- Status text -->
+                <TextBlock Grid.Column="1"
+                           Text="{Binding StatusText}"
+                           FontSize="12" Foreground="#B3B3B3"
+                           VerticalAlignment="Center"
+                           Margin="0,0,16,0"/>
+
+                <!-- Push button -->
+                <Button Grid.Column="2"
+                        Classes="Primary"
+                        Content="Push Current Clipboard"
+                        Command="{Binding PushClipboardCommand}"
+                        VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Actions row -->
+        <StackPanel DockPanel.Dock="Top"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    HorizontalAlignment="Right"
+                    Margin="0,0,0,12">
+            <Button Background="Transparent"
+                    Foreground="#FF5252"
+                    CornerRadius="6"
+                    Padding="10,6"
+                    Content="Clear History"
+                    Command="{Binding ClearHistoryCommand}"/>
+        </StackPanel>
+
+        <!-- Clipboard history feed -->
+        <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding History}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="m:ClipboardEntry">
+                        <!-- Chat-bubble style card -->
+                        <Border Background="#2D2D2D"
+                                CornerRadius="10"
+                                Padding="16,12"
+                                Margin="0,0,0,10"
+                                MaxWidth="700"
+                                HorizontalAlignment="Left">
+                            <Grid RowDefinitions="Auto,Auto,Auto">
+
+                                <!-- Snippet (trimmed) -->
+                                <TextBlock Grid.Row="0"
+                                           Text="{Binding Preview}"
+                                           TextTrimming="CharacterEllipsis"
+                                           TextWrapping="Wrap"
+                                           MaxLines="3"
+                                           FontSize="13"
+                                           Foreground="#FFFFFF"/>
+
+                                <!-- Meta row: source device + time -->
+                                <StackPanel Grid.Row="1"
+                                            Orientation="Horizontal" Spacing="8"
+                                            Margin="0,6,0,0">
+                                    <TextBlock Text="📱"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding SourceDevice}"
+                                               FontSize="11" Foreground="#B3B3B3"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="·"
+                                               FontSize="11" Foreground="#4A4A4A"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding TimeAgo}"
+                                               FontSize="11" Foreground="#4A4A4A"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <!-- Copy button -->
+                                <Button Grid.Row="2"
+                                        Background="Transparent"
+                                        Foreground="#00E5FF"
+                                        CornerRadius="4"
+                                        Padding="0,4"
+                                        FontSize="12"
+                                        Content="⎘ Copy to clipboard"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,6,0,0"
+                                        Command="{Binding $parent[UserControl].((vm:ClipboardViewModel)DataContext).CopyEntryCommand}"
+                                        CommandParameter="{Binding}"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+    </DockPanel>
+</UserControl>

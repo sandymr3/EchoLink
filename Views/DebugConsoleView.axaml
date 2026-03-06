@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             x:Class="EchoLink.Views.DebugConsoleView"
+             x:DataType="vm:DebugConsoleViewModel"
+             Background="Transparent">
+
+    <DockPanel Margin="32,24">
+
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,16">
+            <TextBlock Text="Debug Console"
+                       FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
+            <TextBlock Text="Real-time diagnostic log for EchoLink services"
+                       FontSize="13" Foreground="#B3B3B3"/>
+        </StackPanel>
+
+        <!-- Toolbar -->
+        <Border DockPanel.Dock="Top"
+                Background="#1E1E1E"
+                CornerRadius="8"
+                Padding="12,8"
+                Margin="0,0,0,12">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+
+                <TextBlock Grid.Column="0"
+                           Text="{Binding ExportStatus}"
+                           FontSize="12" Foreground="#B3B3B3"
+                           VerticalAlignment="Center"/>
+
+                <Button Grid.Column="2"
+                        Background="Transparent"
+                        Foreground="#FF5252"
+                        CornerRadius="6"
+                        Padding="10,6"
+                        Margin="0,0,8,0"
+                        Content="Clear Logs"
+                        Command="{Binding ClearLogsCommand}"/>
+
+                <Button Grid.Column="3"
+                        Classes="Primary"
+                        Content="Export Logs"
+                        Command="{Binding ExportLogsCommand}"/>
+            </Grid>
+        </Border>
+
+        <!-- Log window -->
+        <Border Background="#0D0D0D"
+                CornerRadius="8"
+                Padding="0">
+            <ScrollViewer Name="LogScrollViewer"
+                          Padding="16"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding LogEntries}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="m:LogEntry">
+                            <TextBlock Text="{Binding FormattedMessage}"
+                                       FontFamily="Consolas, Courier New, monospace"
+                                       FontSize="12"
+                                       TextWrapping="Wrap"
+                                       Margin="0,1"
+                                       Foreground="{Binding LevelBrush}"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+    </DockPanel>
+</UserControl>

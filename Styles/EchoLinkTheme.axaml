@@ -1,0 +1,129 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         EchoLink Design-System Resources
+    ═════════════════════════════════════════════════════════════════════ -->
+    <Styles.Resources>
+        <!-- Palette -->
+        <Color x:Key="BgMain">#121212</Color>
+        <Color x:Key="BgSurface">#1E1E1E</Color>
+        <Color x:Key="BgCard">#2D2D2D</Color>
+        <Color x:Key="AccentCyan">#00E5FF</Color>
+        <Color x:Key="AccentMint">#00E676</Color>
+        <Color x:Key="Danger">#FF5252</Color>
+        <Color x:Key="TextPrimary">#FFFFFF</Color>
+        <Color x:Key="TextSecondary">#B3B3B3</Color>
+
+        <SolidColorBrush x:Key="BrushBgMain"      Color="{StaticResource BgMain}"/>
+        <SolidColorBrush x:Key="BrushBgSurface"   Color="{StaticResource BgSurface}"/>
+        <SolidColorBrush x:Key="BrushBgCard"      Color="{StaticResource BgCard}"/>
+        <SolidColorBrush x:Key="BrushAccentCyan"  Color="{StaticResource AccentCyan}"/>
+        <SolidColorBrush x:Key="BrushAccentMint"  Color="{StaticResource AccentMint}"/>
+        <SolidColorBrush x:Key="BrushDanger"      Color="{StaticResource Danger}"/>
+        <SolidColorBrush x:Key="BrushTextPrimary" Color="{StaticResource TextPrimary}"/>
+        <SolidColorBrush x:Key="BrushTextSecondary" Color="{StaticResource TextSecondary}"/>
+    </Styles.Resources>
+
+    <!-- ── Base window/control background ──────────────────────────────── -->
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{StaticResource BrushBgMain}"/>
+    </Style>
+
+    <Style Selector="UserControl">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <!-- ── TextBlock defaults ───────────────────────────────────────────── -->
+    <Style Selector="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}"/>
+        <Setter Property="FontFamily" Value="Inter, Segoe UI, Roboto, sans-serif"/>
+    </Style>
+
+    <!-- ── EchoLink primary button ─────────────────────────────────────── -->
+    <Style Selector="Button.Primary">
+        <Setter Property="Background"   Value="{StaticResource BrushAccentCyan}"/>
+        <Setter Property="Foreground"   Value="#121212"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding"      Value="16,10"/>
+        <Setter Property="FontWeight"   Value="SemiBold"/>
+        <Setter Property="Cursor"       Value="Hand"/>
+    </Style>
+    <Style Selector="Button.Primary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#00BCD4"/>
+    </Style>
+
+    <!-- ── Danger button ────────────────────────────────────────────────── -->
+    <Style Selector="Button.Danger">
+        <Setter Property="Background"   Value="{StaticResource BrushDanger}"/>
+        <Setter Property="Foreground"   Value="#FFFFFF"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding"      Value="16,10"/>
+        <Setter Property="FontWeight"   Value="SemiBold"/>
+        <Setter Property="Cursor"       Value="Hand"/>
+    </Style>
+
+    <!-- ── Ghost / nav button ───────────────────────────────────────────── -->
+    <Style Selector="Button.Nav">
+        <Setter Property="Background"   Value="Transparent"/>
+        <Setter Property="Foreground"   Value="{StaticResource BrushTextSecondary}"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding"      Value="12,10"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="Cursor"       Value="Hand"/>
+    </Style>
+    <Style Selector="Button.Nav:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#2D2D2D"/>
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource BrushAccentCyan}"/>
+    </Style>
+    <Style Selector="Button.NavActive">
+        <Setter Property="Background"   Value="#2D2D2D"/>
+        <Setter Property="Foreground"   Value="{StaticResource BrushAccentCyan}"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding"      Value="12,10"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="Cursor"       Value="Hand"/>
+        <Setter Property="FontWeight"   Value="SemiBold"/>
+    </Style>
+
+    <!-- ── Card border ──────────────────────────────────────────────────── -->
+    <Style Selector="Border.Card">
+        <Setter Property="Background"    Value="{StaticResource BrushBgCard}"/>
+        <Setter Property="CornerRadius"  Value="8"/>
+        <Setter Property="Padding"       Value="16"/>
+    </Style>
+
+    <!-- ── ComboBox ─────────────────────────────────────────────────────── -->
+    <Style Selector="ComboBox">
+        <Setter Property="Background"   Value="{StaticResource BrushBgCard}"/>
+        <Setter Property="Foreground"   Value="{StaticResource BrushTextPrimary}"/>
+        <Setter Property="CornerRadius" Value="8"/>
+    </Style>
+
+    <!-- ── ProgressBar ──────────────────────────────────────────────────── -->
+    <Style Selector="ProgressBar">
+        <Setter Property="Background"  Value="{StaticResource BrushBgCard}"/>
+        <Setter Property="Foreground"  Value="{StaticResource BrushAccentCyan}"/>
+        <Setter Property="CornerRadius" Value="4"/>
+        <Setter Property="Height"      Value="6"/>
+    </Style>
+
+    <!-- ── ScrollViewer ─────────────────────────────────────────────────── -->
+    <Style Selector="ScrollViewer">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <!-- ── ListBox ──────────────────────────────────────────────────────── -->
+    <Style Selector="ListBox">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="ListBoxItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Padding"    Value="0,4"/>
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+</Styles>

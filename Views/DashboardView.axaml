@@ -1,0 +1,148 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:conv="using:EchoLink.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             x:Class="EchoLink.Views.DashboardView"
+             x:DataType="vm:DashboardViewModel"
+             Background="Transparent">
+
+    <UserControl.Resources>
+        <conv:BoolToColorConverter x:Key="MeshStatusColor"
+                                   TrueColor="#00E676"
+                                   FalseColor="#FF5252"/>
+    </UserControl.Resources>
+
+    <ScrollViewer Padding="32,24">
+        <StackPanel Spacing="24">
+
+            <!-- ── Header ─────────────────────────────────────────────── -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Network Status"
+                           FontSize="28" FontWeight="Bold"
+                           Foreground="#FFFFFF"/>
+                <TextBlock Text="Headscale mesh overview"
+                           FontSize="13" Foreground="#B3B3B3"/>
+            </StackPanel>
+
+            <!-- ── Status Card ────────────────────────────────────────── -->
+            <Border Classes="Card">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+
+                    <!-- Status label row -->
+                    <StackPanel Grid.Row="0" Grid.Column="0"
+                                Orientation="Horizontal" Spacing="12"
+                                VerticalAlignment="Center">
+                        <Ellipse Width="16" Height="16"
+                                 Fill="{Binding IsMeshOnline, Converter={StaticResource MeshStatusColor}}"/>
+                        <TextBlock Text="{Binding StatusText}"
+                                   FontSize="18" FontWeight="SemiBold"
+                                   Foreground="#FFFFFF"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- Network name -->
+                    <TextBlock Grid.Row="1" Grid.Column="0"
+                               Text="{Binding NetworkName}"
+                               FontSize="12" Foreground="#B3B3B3"
+                               Margin="28,4,0,0"/>
+
+                    <!-- Refresh button -->
+                    <Button Grid.Row="0" Grid.Column="1" Grid.RowSpan="2"
+                            Classes="Primary"
+                            Command="{Binding RefreshNetworkCommand}"
+                            Content="Refresh"
+                            VerticalAlignment="Center"/>
+
+                    <!-- IP Display -->
+                    <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                            Background="#121212"
+                            CornerRadius="6"
+                            Padding="14,10"
+                            Margin="0,16,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Tailscale / Headscale IP"
+                                           FontSize="10" Foreground="#B3B3B3"
+                                           Margin="0,0,0,2"/>
+                                <SelectableTextBlock Text="{Binding TailscaleIp}"
+                                                     FontSize="20" FontWeight="Bold"
+                                                     FontFamily="Consolas, monospace"
+                                                     Foreground="#00E5FF"/>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Command="{Binding CopyIpCommand}"
+                                    Background="Transparent"
+                                    Foreground="#B3B3B3"
+                                    CornerRadius="6"
+                                    Padding="10,6"
+                                    ToolTip.Tip="Copy IP"
+                                    VerticalAlignment="Center"
+                                    Content="⎘"/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- ── Connected Devices ──────────────────────────────────── -->
+            <StackPanel Spacing="12">
+                <TextBlock Text="Connected Devices"
+                           FontSize="16" FontWeight="SemiBold"
+                           Foreground="#FFFFFF"/>
+
+                <ItemsControl ItemsSource="{Binding Devices}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="m:Device">
+                            <Border Classes="Card" Margin="0,0,0,8">
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+
+                                    <!-- Device icon -->
+                                    <Border Grid.Column="0"
+                                            Width="44" Height="44"
+                                            Background="#121212"
+                                            CornerRadius="22"
+                                            Margin="0,0,14,0">
+                                        <TextBlock Text="{Binding DeviceIcon}"
+                                                   FontSize="20"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                    </Border>
+
+                                    <!-- Name + IP -->
+                                    <StackPanel Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Spacing="2">
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontSize="14" FontWeight="SemiBold"
+                                                   Foreground="#FFFFFF"/>
+                                        <TextBlock Text="{Binding IpAddress}"
+                                                   FontSize="11" Foreground="#B3B3B3"
+                                                   FontFamily="Consolas, monospace"/>
+                                        <TextBlock Text="{Binding Os}"
+                                                   FontSize="11" Foreground="#4A4A4A"/>
+                                    </StackPanel>
+
+                                    <!-- Online dot -->
+                                    <StackPanel Grid.Column="2"
+                                                Orientation="Horizontal" Spacing="6"
+                                                VerticalAlignment="Center">
+                                        <Ellipse Width="8" Height="8"
+                                                 Fill="{Binding IsOnline, Converter={StaticResource MeshStatusColor}}"/>
+                                        <TextBlock Text="{Binding StatusLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{Binding IsOnline, Converter={StaticResource MeshStatusColor}}"/>
+                                    </StackPanel>
+
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
