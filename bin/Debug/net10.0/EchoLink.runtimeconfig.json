@@ -6,7 +6,9 @@
       "version": "10.0.0"
     },
     "configProperties": {
+      "Avalonia.Diagnostics.Diagnostic.IsEnabled": true,
       "MVVMTOOLKIT_ENABLE_INOTIFYPROPERTYCHANGING_SUPPORT": true,
+      "System.Diagnostics.Metrics.Meter.IsSupported": true,
       "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false
     }
   }

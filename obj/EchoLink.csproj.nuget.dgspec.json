@@ -1,26 +1,25 @@
 {
   "format": 1,
   "restore": {
-    "D:\\projects\\echolink\\EchoLink.csproj": {}
+    "D:\\Projects\\EchoLink\\EchoLink.csproj": {}
   },
   "projects": {
-    "D:\\projects\\echolink\\EchoLink.csproj": {
+    "D:\\Projects\\EchoLink\\EchoLink.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\projects\\echolink\\EchoLink.csproj",
+        "projectUniqueName": "D:\\Projects\\EchoLink\\EchoLink.csproj",
         "projectName": "EchoLink",
-        "projectPath": "D:\\projects\\echolink\\EchoLink.csproj",
-        "packagesPath": "C:\\Users\\ugant\\.nuget\\packages\\",
-        "outputPath": "D:\\projects\\echolink\\obj\\",
+        "projectPath": "D:\\Projects\\EchoLink\\EchoLink.csproj",
+        "packagesPath": "C:\\Users\\HP\\.nuget\\packages\\",
+        "outputPath": "D:\\Projects\\EchoLink\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\ugant\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "C:\\Users\\HP\\AppData\\Roaming\\NuGet\\NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net10.0"
         ],
         "sources": {
-          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
@@ -64,6 +63,10 @@
             "Avalonia.Themes.Fluent": {
               "target": "Package",
               "version": "[11.3.12, )"
+            },
+            "AvaloniaUI.DiagnosticsSupport": {
+              "target": "Package",
+              "version": "[2.1.1, )"
             },
             "CommunityToolkit.Mvvm": {
               "target": "Package",

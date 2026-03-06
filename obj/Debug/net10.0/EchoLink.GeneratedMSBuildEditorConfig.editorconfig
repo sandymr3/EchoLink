@@ -22,32 +22,32 @@ build_property.PlatformNeutralAssembly =
 build_property.EnforceExtendedAnalyzerRules = 
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = EchoLink
-build_property.ProjectDir = D:\projects\echolink\
+build_property.ProjectDir = D:\Projects\EchoLink\
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 
 build_property.EffectiveAnalysisLevelStyle = 10.0
 build_property.EnableCodeStyleSeverity = 
 
-[D:/projects/echolink/App.axaml]
+[D:/Projects/EchoLink/App.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Styles/EchoLinkTheme.axaml]
+[D:/Projects/EchoLink/Styles/EchoLinkTheme.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/ClipboardView.axaml]
+[D:/Projects/EchoLink/Views/ClipboardView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/DashboardView.axaml]
+[D:/Projects/EchoLink/Views/DashboardView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/DebugConsoleView.axaml]
+[D:/Projects/EchoLink/Views/DebugConsoleView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/FileTransferView.axaml]
+[D:/Projects/EchoLink/Views/FileTransferView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/MainWindow.axaml]
+[D:/Projects/EchoLink/Views/MainWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[D:/projects/echolink/Views/RemoteControlView.axaml]
+[D:/Projects/EchoLink/Views/RemoteControlView.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("EchoLink")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+737c87a245786bfd2404572ae667df92141a5bf8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cb35b66e7fb4d6c0cef51ce482cd1b2fd2d3b32b")]
 [assembly: System.Reflection.AssemblyProductAttribute("EchoLink")]
 [assembly: System.Reflection.AssemblyTitleAttribute("EchoLink")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
