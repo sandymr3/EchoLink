@@ -18,4 +18,14 @@
   <ItemGroup>
     <ProjectReference Include="..\EchoLink.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Binaries\tailscaled.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Binaries\tailscale.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
