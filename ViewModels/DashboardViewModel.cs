@@ -14,30 +14,56 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty] private string _tailscaleIp = "—";
     [ObservableProperty] private string _networkName = "EchoLink-Mesh";
     [ObservableProperty] private string _statusText = "Disconnected";
+    [ObservableProperty] private bool _isRefreshing;
 
-    public ObservableCollection<Device> Devices { get; } =
-    [
-        new Device { Name = "Gautam-Desktop", IpAddress = "100.64.10.1", IsOnline = true,  DeviceType = "Desktop", Os = "Windows 11" },
-        new Device { Name = "Gautam-Phone",   IpAddress = "100.64.10.2", IsOnline = true,  DeviceType = "Phone",   Os = "Android 14" },
-        new Device { Name = "Gautam-Laptop",  IpAddress = "100.64.10.3", IsOnline = false, DeviceType = "Laptop",  Os = "Ubuntu 24.04" },
-    ];
+    public ObservableCollection<Device> Devices { get; } = [];
 
     public DashboardViewModel()
     {
         _log.Info("Dashboard initialized.");
+        _ = RefreshNetworkAsync();
     }
 
     [RelayCommand]
     private async Task RefreshNetworkAsync()
     {
+        if (IsRefreshing) return;
+        IsRefreshing = true;
         _log.Info("Refreshing network status...");
         StatusText = "Checking...";
-        await Task.Delay(1200); // simulate network call
 
-        IsMeshOnline = true;
-        TailscaleIp  = "100.64.10.1";
-        StatusText   = "Connected";
-        _log.Info($"Mesh online. IP: {TailscaleIp}");
+        try
+        {
+            var (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+
+            Devices.Clear();
+            foreach (var d in devices)
+                Devices.Add(d);
+
+            if (selfIp != null)
+            {
+                TailscaleIp = selfIp;
+                IsMeshOnline = true;
+                StatusText = "Connected";
+                _log.Info($"Mesh online. IP: {TailscaleIp}, {devices.Count} device(s)");
+            }
+            else
+            {
+                TailscaleIp = "—";
+                IsMeshOnline = false;
+                StatusText = "Disconnected";
+                _log.Warning("Could not retrieve Tailscale status.");
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Error";
+            _log.Error($"Refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            IsRefreshing = false;
+        }
     }
 
     [RelayCommand]

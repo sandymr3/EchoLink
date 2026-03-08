@@ -95,12 +95,22 @@
                     </Button>
                 </StackPanel>
 
-                <!-- Bottom: Version -->
-                <TextBlock DockPanel.Dock="Bottom"
-                           Text="v1.0 · FOSS Hack 2026"
-                           FontSize="10"
-                           Foreground="#4A4A4A"
-                           Margin="20,0,20,20"/>
+                <!-- Bottom: Logout + Version -->
+                <StackPanel DockPanel.Dock="Bottom" Margin="12,0,12,12" Spacing="8">
+                    <Button Classes="Nav"
+                            Command="{Binding LogoutCommand}"
+                            HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="🚪" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="Logout" VerticalAlignment="Center"
+                                       Foreground="#FF5252"/>
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="v1.0 · FOSS Hack 2026"
+                               FontSize="10"
+                               Foreground="#4A4A4A"
+                               Margin="8,0,0,8"/>
+                </StackPanel>
 
             </DockPanel>
         </Border>

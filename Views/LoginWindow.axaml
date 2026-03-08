@@ -1,0 +1,87 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EchoLink.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="480" d:DesignHeight="520"
+        x:Class="EchoLink.Views.LoginWindow"
+        x:DataType="vm:LoginViewModel"
+        Title="EchoLink — Sign In"
+        Width="480" Height="520"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Background="#121212"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="PreferSystemChrome">
+
+    <Design.DataContext>
+        <vm:LoginViewModel/>
+    </Design.DataContext>
+
+    <Border Padding="40">
+        <StackPanel VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    Spacing="24"
+                    Width="320">
+
+            <!-- Logo -->
+            <StackPanel HorizontalAlignment="Center" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="12"
+                            HorizontalAlignment="Center">
+                    <Ellipse Width="14" Height="14"
+                             Fill="#00E676"
+                             VerticalAlignment="Center"/>
+                    <TextBlock Text="EchoLink"
+                               FontSize="32" FontWeight="Bold"
+                               Foreground="#FFFFFF"/>
+                </StackPanel>
+                <TextBlock Text="Mesh Network"
+                           FontSize="13"
+                           Foreground="#B3B3B3"
+                           HorizontalAlignment="Center"/>
+            </StackPanel>
+
+            <!-- Divider -->
+            <Border Height="1" Background="#2D2D2D" Margin="0,8"/>
+
+            <!-- Status text -->
+            <TextBlock Text="{Binding StatusText}"
+                       FontSize="13"
+                       Foreground="#B3B3B3"
+                       TextWrapping="Wrap"
+                       HorizontalAlignment="Center"
+                       TextAlignment="Center"/>
+
+            <!-- Loading spinner -->
+            <ProgressBar IsIndeterminate="True"
+                         IsVisible="{Binding IsLoading}"
+                         Height="3"
+                         Foreground="#00E676"
+                         Background="#2D2D2D"/>
+
+            <!-- Login button -->
+            <Button Command="{Binding LoginWithGoogleCommand}"
+                    IsEnabled="{Binding !IsLoading}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Padding="0,14"
+                    CornerRadius="8"
+                    Background="#00E676"
+                    Foreground="#121212"
+                    FontSize="15"
+                    FontWeight="Bold">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="🔐" FontSize="16" VerticalAlignment="Center"/>
+                    <TextBlock Text="Login with Google" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+
+            <!-- Footer -->
+            <TextBlock Text="Connects via Headscale · echo-link.app"
+                       FontSize="10"
+                       Foreground="#4A4A4A"
+                       HorizontalAlignment="Center"
+                       Margin="0,16,0,0"/>
+        </StackPanel>
+    </Border>
+</Window>

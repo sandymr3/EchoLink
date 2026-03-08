@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EchoLink.Services;
 
 namespace EchoLink.ViewModels;
 
@@ -15,6 +16,11 @@ public partial class MainWindowViewModel : ViewModelBase
     public RemoteControlViewModel RemoteControl { get; } = new();
     public DebugConsoleViewModel  DebugConsole  { get; } = new();
 
+    /// <summary>
+    /// Raised when logout completes so the hosting window can switch to LoginWindow.
+    /// </summary>
+    public event System.Action? LoggedOut;
+
     public MainWindowViewModel()
     {
         _currentPage = Dashboard;
@@ -28,6 +34,13 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [RelayCommand]
     private void ToggleSidebar() => IsSidebarOpen = !IsSidebarOpen;
+
+    [RelayCommand]
+    private async System.Threading.Tasks.Task LogoutAsync()
+    {
+        await TailscaleService.Instance.LogoutAsync();
+        LoggedOut?.Invoke();
+    }
 
     private void Navigate(ViewModelBase vm, string title)
     {

@@ -10,8 +10,9 @@ public partial class Device : ObservableObject
     [ObservableProperty] private string _deviceType = "Desktop"; // "Desktop" | "Phone" | "Laptop"
     [ObservableProperty] private string _os = string.Empty;
     [ObservableProperty] private string _lastSeen = string.Empty;
+    [ObservableProperty] private bool _isSelf;
 
-    public string StatusLabel => IsOnline ? "Online" : "Offline";
+    public string StatusLabel => IsSelf ? "This device" : (IsOnline ? "Online" : "Offline");
     public string DeviceIcon => DeviceType switch
     {
         "Phone"  => "📱",
