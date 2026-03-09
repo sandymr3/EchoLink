@@ -38,6 +38,14 @@ namespace EchoLink.Services
                 Directory.CreateDirectory(_sshDir);
             }
 
+            // Secure the .ssh directory itself on Windows so sshd doesn't reject it
+            if (OperatingSystem.IsWindows())
+            {
+                Process.Start(new ProcessStartInfo("icacls", $"\"{_sshDir}\" /inheritance:r /q") { CreateNoWindow = true })?.WaitForExit();
+                Process.Start(new ProcessStartInfo("icacls", $"\"{_sshDir}\" /grant SYSTEM:(F) /q") { CreateNoWindow = true })?.WaitForExit();
+                Process.Start(new ProcessStartInfo("icacls", $"\"{_sshDir}\" /grant \"{Environment.UserName}:(F)\" /q") { CreateNoWindow = true })?.WaitForExit();
+            }
+
             if (!File.Exists(PrivateKeyPath) || !File.Exists(PublicKeyPath))
             {
                 // Generate a new ed25519 keypair without password via standard ssh-keygen
@@ -219,12 +227,17 @@ namespace EchoLink.Services
                 await writer.WriteLineAsync($"{myHostname}|||{myUsername}|||{myPubKey}");
 
                 string? response = await reader.ReadLineAsync();
-                
+
                 if (response != null && response.StartsWith("ACCEPTED|||"))
                 {
                     string targetUser = response.Substring("ACCEPTED|||".Length).Trim();
                     return (true, targetUser);
                 }
+                
+                if (response == null)
+                    LoggingService.Instance.Warning($"[Pairing] Connection closed by remote host {targetIp}");
+                else
+                    LoggingService.Instance.Warning($"[Pairing] Remote responded: {response}");
 
                 return (false, null);
             }
@@ -243,18 +256,20 @@ namespace EchoLink.Services
             if (!File.Exists(authKeysPath))
             {
                 await File.WriteAllTextAsync(authKeysPath, "");
-                
-                if (OperatingSystem.IsLinux())
-                {
-                    Process.Start(new ProcessStartInfo("chmod", $"600 \"{authKeysPath}\""));
-                }
-                else if (OperatingSystem.IsWindows())
-                {
-                    // For Windows, ensure correct ACLs on the new authorized_keys file safely
-                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /inheritance:r") { CreateNoWindow = true })?.WaitForExit();
-                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant SYSTEM:(F)") { CreateNoWindow = true })?.WaitForExit();
-                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant \"{Environment.UserName}:(F)\"") { CreateNoWindow = true })?.WaitForExit();
-                }
+            }
+
+            // Always enforce permissions on every key addition to ensure OpenSSH doesn't reject it
+            if (OperatingSystem.IsLinux())
+            {
+                Process.Start(new ProcessStartInfo("chmod", $"600 \"{authKeysPath}\""));
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                // Unblock files if created by downloading or bad inheritance
+                Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /reset /q") { CreateNoWindow = true })?.WaitForExit();
+                Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /inheritance:r /q") { CreateNoWindow = true })?.WaitForExit();
+                Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant SYSTEM:(F) /q") { CreateNoWindow = true })?.WaitForExit();
+                Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant \"{Environment.UserName}:(F)\" /q") { CreateNoWindow = true })?.WaitForExit();
             }
 
             // Check if key already exists to prevent duplicates

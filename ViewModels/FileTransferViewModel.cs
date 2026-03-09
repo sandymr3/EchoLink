@@ -121,9 +121,8 @@ public partial class FileTransferViewModel : ViewModelBase
                 _log.Warning("[SFTP] Pairing rejected or timed out. SFTP connection may fail if not already authorized.");
             }
 
-            string remotePath = (SelectedTarget.Os?.ToLower().Contains("windows") == true)
-                ? $"C:/Users/{targetUsername}/Downloads/{fileName}" 
-                : $"/home/{targetUsername}/Downloads/{fileName}"; // Default destination      
+            // Just pass the filename, let the SftpService resolve the remote OS folder dynamically
+            string remotePath = fileName; 
 
             await _sftp.UploadFileAsync(
                 SelectedTarget.IpAddress,
