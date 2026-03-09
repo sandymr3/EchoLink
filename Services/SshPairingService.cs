@@ -198,10 +198,19 @@ namespace EchoLink.Services
             {
                 await File.WriteAllTextAsync(authKeysPath, "");
                 
-                // On Linux restrict permissions
                 if (OperatingSystem.IsLinux())
                 {
                     Process.Start(new ProcessStartInfo("chmod", $"600 \"{authKeysPath}\""));
+                }
+                else if (OperatingSystem.IsWindows())
+                {
+                    // For Windows, ensure correct ACLs on the new authorized_keys file
+                    var psi = new ProcessStartInfo("powershell", $"-NoProfile -Command \"icacls '{authKeysPath}' /inheritance:r; icacls '{authKeysPath}' /grant SYSTEM:`(F`); icacls '{authKeysPath}' /grant $env:USERNAME:`(F`)\"")
+                    {
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    Process.Start(psi)?.WaitForExit();
                 }
             }
 
