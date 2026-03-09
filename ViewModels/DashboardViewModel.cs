@@ -34,7 +34,35 @@ public partial class DashboardViewModel : ViewModelBase
 
         try
         {
-            var (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            // Wait for the daemon to reach Running state by polling the CLI.
+            // This ensures the daemon has fully initialised its network map.
+            bool ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
+                TimeSpan.FromSeconds(15));
+
+            if (!ready)
+            {
+                _log.Warning("[Dashboard] Daemon not Running after 15 s — showing disconnected.");
+                TailscaleIp = "—";
+                IsMeshOnline = false;
+                StatusText = "Disconnected";
+                return;
+            }
+
+            // Fetch status via the CLI.
+            // Retry a few times in case the daemon is still settling.
+            string? selfIp = null;
+            var devices = new System.Collections.Generic.List<Models.Device>();
+
+            for (int attempt = 1; attempt <= 4; attempt++)
+            {
+                (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+
+                if (selfIp != null)
+                    break;
+
+                _log.Info($"[Dashboard] Refresh attempt {attempt}/4: no data yet, retrying...");
+                await Task.Delay(2000);
+            }
 
             Devices.Clear();
             foreach (var d in devices)

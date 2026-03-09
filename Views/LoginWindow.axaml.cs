@@ -20,6 +20,13 @@ public partial class LoginWindow : Window
         }
     }
 
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (DataContext is LoginViewModel vm)
+            vm.Cancel();
+    }
+
     private void OnLoginSucceeded()
     {
         var mainWindow = new MainWindow

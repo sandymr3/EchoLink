@@ -50,34 +50,25 @@ public partial class App : Application
 
     private static async Task ShowStartupWindowAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
-        // Wait for tailscaled to be ready (up to 5 seconds)
-        string state = "Unknown";
-        // Phase 1: Wait for daemon to respond with any known state (up to 5s)
-        for (int i = 0; i < 10; i++)
-        {
-            await Task.Delay(500);
-            state = await TailscaleService.Instance.GetBackendStateAsync();
-            if (state == "Running")
-                break;
-            if (state is "NeedsLogin" or "Stopped")
-                break; // move to phase 2
-        }
+        var log = EchoLink.Services.LoggingService.Instance;
+        log.Info("[Startup] Waiting for tailscaled to be ready...");
 
-        // Phase 2: If we got NeedsLogin, the daemon may still be restoring
-        // saved credentials from the state file (needs a network round-trip
-        // to the coordination server). Give it a few more seconds.
-        if (state == "NeedsLogin")
-        {
-            for (int i = 0; i < 8; i++) // up to 4 more seconds
-            {
-                await Task.Delay(500);
-                state = await TailscaleService.Instance.GetBackendStateAsync();
-                if (state == "Running")
-                    break;
-            }
-        }
+        // Give the daemon a moment to start and load its state file.
+        await Task.Delay(2000);
 
-        if (state == "Running")
+        // Try to bring the daemon to Running state. If the daemon has saved
+        // credentials from a previous session, "tailscale up" will set
+        // WantRunning=true and the daemon will auto-connect without requiring
+        // a fresh login. If auth is needed, TryBringUpAsync detects the auth
+        // URL and returns false so we can show the login window.
+        log.Info("[Startup] Running 'tailscale up' to restore connection...");
+        bool running = await TailscaleService.Instance.TryBringUpAsync(
+            TimeSpan.FromSeconds(15));
+
+        string decision = running ? "Running → MainWindow" : "not Running → LoginWindow";
+        log.Info($"[Startup] Daemon {decision}");
+
+        if (running)
         {
             // Already authenticated — go straight to main window
             var mainWindow = new MainWindow { DataContext = new MainWindowViewModel() };

@@ -10,7 +10,7 @@ namespace EchoLink.ViewModels;
 public partial class LoginViewModel : ViewModelBase
 {
     private readonly LoggingService _log = LoggingService.Instance;
-    private CancellationTokenSource? _pollCts;
+    private CancellationTokenSource? _loginCts;
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _statusText = "Sign in to connect to EchoLink mesh";
@@ -25,27 +25,39 @@ public partial class LoginViewModel : ViewModelBase
     {
         if (IsLoading) return;
         IsLoading = true;
-        StatusText = "Opening browser for Google sign-in...";
+        StatusText = "Starting login...";
 
-        _pollCts = new CancellationTokenSource();
-        var ct = _pollCts.Token;
+        _loginCts = new CancellationTokenSource();
+        var ct = _loginCts.Token;
 
         try
         {
-            // Fire-and-forget the login process (it opens a browser and blocks
-            // until the auth handshake finishes or is cancelled).
-            var loginTask = TailscaleService.Instance.LoginAsync(authUrl =>
+            // Reset the stderr-based Running flag so we can detect a fresh
+            // transition after this login attempt.
+            TailscaleService.Instance.ResetRunningState();
+
+            // "tailscale up --login-server=..." handles both auth AND bringing
+            // the VPN up.  Unlike "tailscale login", "up" stays connected to
+            // the daemon until it reaches Running state, then exits with code 0.
+            //
+            // If auth is needed, it prints the same auth URL and waits for the
+            // user to complete browser authentication.
+            //
+            // When "up" exits with code 0, the daemon IS in Running state.
+            await TailscaleService.Instance.LoginAsync(authUrl =>
             {
-                _log.Info($"[Login] Auth URL: {authUrl}");
+                _log.Info($"[Login] Auth URL received: {authUrl}");
                 OpenBrowser(authUrl);
                 Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    StatusText = "Waiting for Google authentication...");
+                    StatusText = "Browser opened — complete Google sign-in...");
             }, ct);
 
-            // Poll backend state while the login process runs
-            _ = PollForRunningAsync(ct);
-
-            await loginTask;
+            // "tailscale up" exited with code 0 → daemon reached Running state.
+            // The daemon may briefly lose Running after the CLI disconnects, but
+            // MainWindow's periodic status checks will re-trigger the profile
+            // switch and bring it back to Running.
+            _log.Info("[Login] 'tailscale up' succeeded — transitioning to main window.");
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
         }
         catch (OperationCanceledException)
         {
@@ -53,7 +65,7 @@ public partial class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _log.Error($"[Login] {ex.Message}");
+            _log.Error($"[Login] Unexpected error: {ex.Message}");
             StatusText = $"Login failed: {ex.Message}";
         }
         finally
@@ -62,39 +74,26 @@ public partial class LoginViewModel : ViewModelBase
         }
     }
 
-    private async Task PollForRunningAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            await Task.Delay(2000, ct);
-            var state = await TailscaleService.Instance.GetBackendStateAsync(ct);
-            if (state == "Running")
-            {
-                _log.Info("[Login] BackendState is Running — login succeeded.");
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
-                _pollCts?.Cancel();
-                return;
-            }
-        }
-    }
-
     private static void OpenBrowser(string url)
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = url,
                 UseShellExecute = true
-            };
-            System.Diagnostics.Process.Start(psi);
+            });
         }
         catch
         {
-            // Fallback: on Linux, xdg-open
-            System.Diagnostics.Process.Start("xdg-open", url);
+            try { System.Diagnostics.Process.Start("xdg-open", url); } catch { /* ignore */ }
         }
     }
 
-    public void Cancel() => _pollCts?.Cancel();
+    [RelayCommand]
+    public void Cancel()
+    {
+        _loginCts?.Cancel();
+        _log.Info("[Login] Login cancelled by user.");
+    }
 }

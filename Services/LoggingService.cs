@@ -1,4 +1,7 @@
+using System;
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Text;
 using EchoLink.Models;
 
 namespace EchoLink.Services;
@@ -10,11 +13,41 @@ public sealed class LoggingService
 
     public ObservableCollection<LogEntry> Entries { get; } = [];
 
-    private LoggingService() { }
+    private readonly string? _logFilePath;
+    private readonly object _fileLock = new();
+
+    private LoggingService()
+    {
+        // On Windows there is no terminal (WinExe), so write a rolling log file
+        // under %LOCALAPPDATA%\EchoLink\ for debugging.
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "EchoLink");
+            Directory.CreateDirectory(dir);
+            _logFilePath = Path.Combine(dir, "echolink_debug.log");
+
+            // Write a fresh session header so runs are easy to separate.
+            File.AppendAllText(_logFilePath,
+                $"\n--- EchoLink session started {DateTime.Now:yyyy-MM-dd HH:mm:ss} ---\n",
+                Encoding.UTF8);
+        }
+        catch
+        {
+            // If we can't create the log file, just skip file logging silently.
+            _logFilePath = null;
+        }
+    }
 
     public void Log(string message, LogLevel level = LogLevel.Info)
     {
         var entry = new LogEntry(level, message, DateTime.Now);
+
+        // Always append to the log file first (no UI thread dependency).
+        WriteToFile(entry.FormattedMessage);
+
+        // Update the observable collection on the UI thread for in-app display.
         Avalonia.Threading.Dispatcher.UIThread.Post(() => Entries.Add(entry));
     }
 
@@ -28,4 +61,17 @@ public sealed class LoggingService
 
     public string ExportToText() =>
         string.Join(Environment.NewLine, Entries.Select(e => e.FormattedMessage));
+
+    public string? LogFilePath => _logFilePath;
+
+    private void WriteToFile(string line)
+    {
+        if (_logFilePath == null) return;
+        try
+        {
+            lock (_fileLock)
+                File.AppendAllText(_logFilePath, line + "\n", Encoding.UTF8);
+        }
+        catch { /* silently skip if write fails */ }
+    }
 }
