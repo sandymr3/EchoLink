@@ -1,0 +1,11 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EchoLink.Views.LoadingView"
+             Background="#121212">
+    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20">
+        <Ellipse Width="40" Height="40" Fill="#00E676" />
+        <TextBlock Text="EchoLink" FontSize="24" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center"/>
+        <TextBlock Text="Initializing Mesh Node..." Foreground="#B3B3B3" HorizontalAlignment="Center"/>
+        <ProgressBar IsIndeterminate="True" Width="200" Height="2" Foreground="#00E676" Background="#2D2D2D"/>
+    </StackPanel>
+</UserControl>

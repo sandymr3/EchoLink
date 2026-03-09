@@ -44,6 +44,9 @@ public sealed class LoggingService
     {
         var entry = new LogEntry(level, message, DateTime.Now);
 
+        // Print to console for Logcat/Terminal visibility
+        Console.WriteLine(entry.FormattedMessage);
+
         // Always append to the log file first (no UI thread dependency).
         WriteToFile(entry.FormattedMessage);
 

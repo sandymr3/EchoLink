@@ -40,20 +40,28 @@ public partial class MainWindowViewModel : ViewModelBase
     private async System.Threading.Tasks.Task InitializeSetupAsync()
     {
         // Expose ports 22 and 44444 to the Tailnet so Windows can receive files in userspace-networking
+        // On Android, this triggers the Go SSH/SFTP server to start.
         await TailscaleService.Instance.ExposeLocalPortsAsync();
 
-        // One-time SSH Setup
-        IsSshInstalling = true;
-        SshStatusText = "Checking SSH Server...";
-        bool isSshInstalled = await SshSetupService.IsSshServerInstalledAsync();
-        if (!isSshInstalled)
+        if (OperatingSystem.IsAndroid())
         {
-            SshStatusText = "Installing SSH Server (Please accept UAC prompt if asked)...";
-            LoggingService.Instance.Info("SSH Server not found. Attempting to install...");
-            isSshInstalled = await SshSetupService.InstallAndStartSshServerAsync();
+            IsSshReady = true; // Go bridge handles SSH internally
         }
-        IsSshInstalling = false;
-        IsSshReady = isSshInstalled;
+        else
+        {
+            // One-time SSH Setup
+            IsSshInstalling = true;
+            SshStatusText = "Checking SSH Server...";
+            bool isSshInstalled = await SshSetupService.IsSshServerInstalledAsync();
+            if (!isSshInstalled)
+            {
+                SshStatusText = "Installing SSH Server (Please accept UAC prompt if asked)...";
+                LoggingService.Instance.Info("SSH Server not found. Attempting to install...");
+                isSshInstalled = await SshSetupService.InstallAndStartSshServerAsync();
+            }
+            IsSshInstalling = false;
+            IsSshReady = isSshInstalled;
+        }
 
         // Start listening for key exchanges
         var pairingService = new SshPairingService(TailscaleService.Instance);

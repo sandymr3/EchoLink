@@ -12,9 +12,9 @@ namespace EchoLink.Services
         {
             if (OperatingSystem.IsWindows())
             {
-                // Check if sshd service exists and configuration is patched
-                var serviceCheck = await RunCommandAsync("powershell", "-NoProfile -Command \"Get-Service -Name sshd -ErrorAction SilentlyContinue\"");
-                bool isRunning = serviceCheck.ExitCode == 0 && !string.IsNullOrWhiteSpace(serviceCheck.StandardOutput);
+                // Check if sshd service exists AND is currently Running, and configuration is patched
+                var serviceCheck = await RunCommandAsync("powershell", "-NoProfile -Command \"$s = Get-Service -Name sshd -ErrorAction SilentlyContinue; if ($null -eq $s) { exit 1 } if ($s.Status -ne 'Running') { exit 1 } exit 0\"");
+                bool isRunning = serviceCheck.ExitCode == 0;
 
                 var configCheck = await RunCommandAsync("powershell", "-NoProfile -Command \"$c = Get-Content $env:ProgramData\\ssh\\sshd_config -ErrorAction SilentlyContinue; if ($c -match '^Match Group administrators') { exit 1 } else { exit 0 }\"");
                 bool isConfigPatched = configCheck.ExitCode == 0;
@@ -38,27 +38,55 @@ namespace EchoLink.Services
         {
             if (OperatingSystem.IsWindows())
             {
+                string binDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Binaries", "OpenSSH");
+                string installerScriptPath = Path.Combine(binDir, "install-sshd.ps1");
+
                 // Requires admin privileges.
-                string script = @"
-try {
-    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue
-    
-    # Patch sshd_config so Administrators use ~/.ssh/authorized_keys
-    $sshd_config = ""$env:ProgramData\ssh\sshd_config""
-    if (Test-Path $sshd_config) {
-        (Get-Content $sshd_config) -replace '(?m)^Match Group administrators', '#Match Group administrators' -replace '(?m)^\s*AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys', '#       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys' | Set-Content $sshd_config
-    }
+                string script = $@"
+try {{
+    if (Test-Path '{installerScriptPath}') {{
+        & '{installerScriptPath}'
+    }} else {{
+        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue
+    }}
 
     Set-Service -Name sshd -StartupType 'Automatic'
-    Stop-Service sshd -ErrorAction SilentlyContinue
-    Start-Service sshd
+    Start-Service sshd -ErrorAction SilentlyContinue
+
+    # Give sshd time to generate keys and default config if first run
+    Start-Sleep -Seconds 2
+
+    # Patch sshd_config so Administrators use ~/.ssh/authorized_keys
+    $sshd_config = ""$env:ProgramData\ssh\sshd_config""
+    if (Test-Path $sshd_config) {{
+        $content = Get-Content $sshd_config
+        $modified = $false
+        
+        $newContent = foreach ($line in $content) {{
+            if ($line -match '^Match Group administrators') {{
+                '#Match Group administrators'
+                $modified = $true
+            }} elseif ($line -match '^\s*AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys') {{
+                '#       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys'
+                $modified = $true
+            }} else {{
+                $line
+            }}
+        }}
+        
+        if ($modified) {{
+            $newContent | Set-Content $sshd_config
+            Restart-Service sshd -ErrorAction SilentlyContinue
+        }}
+    }}
+
     # Open Firewall
-    if (!(Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+    if (!(Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Select-Object -First 1)) {{
         New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
-    }
-} catch {
+    }}
+}} catch {{
     exit 1
-}
+}}
 exit 0
 ";
                 string tmpScriptFile = Path.Combine(Path.GetTempPath(), "install_sshd.ps1");
@@ -67,8 +95,9 @@ exit 0
                 var psi = new ProcessStartInfo
                 {
                     FileName = "powershell",
-                    Arguments = $"-ExecutionPolicy Bypass -File \"{tmpScriptFile}\"",
+                    Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -File \"{tmpScriptFile}\"",
                     UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
                     Verb = "runas" // Elevate
                 };
 

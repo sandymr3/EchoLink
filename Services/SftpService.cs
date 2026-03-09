@@ -36,7 +36,7 @@ public class SftpService
             // Configure connection to go through the Tailscale SOCKS5 proxy    
             var connectionInfo = new ConnectionInfo(
                 host,
-                22,
+                2222,
                 username,
                 ProxyTypes.Socks5,
                 "127.0.0.1",
@@ -112,7 +112,7 @@ public class SftpService
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
             var connectionInfo = new ConnectionInfo(
                 host,
-                22,
+                2222,
                 username,
                 ProxyTypes.Socks5,
                 "127.0.0.1",

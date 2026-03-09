@@ -8,11 +8,14 @@ using Avalonia.Markup.Xaml;
 using EchoLink.ViewModels;
 using EchoLink.Views;
 using EchoLink.Services;
+using System;
 
 namespace EchoLink;
 
 public partial class App : Application
 {
+    private readonly LoggingService _log = LoggingService.Instance;
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -20,70 +23,88 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // Start the tailscale daemon
+        // Start the tailscale daemon/service
         TailscaleService.Instance.StartDaemon();
+        DisableAvaloniaDataAnnotationValidation();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            DisableAvaloniaDataAnnotationValidation();
-
-            // Show a temporary empty window while we check auth state
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
-
-            // Hook cleanup
             desktop.Exit += (_, _) => TailscaleService.Instance.StopDaemon();
-
-            // Check auth state asynchronously, then show the right window
-            _ = ShowStartupWindowAsync(desktop);
+            _ = InitializeAppAsync(desktop);
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
         {
-            DisableAvaloniaDataAnnotationValidation();
-            singleView.MainView = new Views.MainView
-            {
-                DataContext = new MainWindowViewModel(),
-            };
+            // Show loading view immediately to avoid blank white screen
+            singleView.MainView = new LoadingView();
+            _ = InitializeAppAsync(singleView);
         }
 
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static async Task ShowStartupWindowAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    private async Task InitializeAppAsync(object lifetime)
     {
-        var log = EchoLink.Services.LoggingService.Instance;
-        log.Info("[Startup] Waiting for tailscaled to be ready...");
-
-        // Give the daemon a moment to start and load its state file.
+        _log.Info("[Startup] Initializing application...");
+        
+        // Give the service/daemon time to initialize
         await Task.Delay(2000);
 
-        // Try to bring the daemon to Running state. If the daemon has saved
-        // credentials from a previous session, "tailscale up" will set
-        // WantRunning=true and the daemon will auto-connect without requiring
-        // a fresh login. If auth is needed, TryBringUpAsync detects the auth
-        // URL and returns false so we can show the login window.
-        log.Info("[Startup] Running 'tailscale up' to restore connection...");
-        bool running = await TailscaleService.Instance.TryBringUpAsync(
-            TimeSpan.FromSeconds(15));
+        _log.Info("[Startup] Checking connection status...");
+        bool running = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(10));
+        string state = await TailscaleService.Instance.GetBackendStateAsync();
+        
+        _log.Info($"[Startup] Running={running}, State={state}");
 
-        string decision = running ? "Running → MainWindow" : "not Running → LoginWindow";
-        log.Info($"[Startup] Daemon {decision}");
-
-        if (running)
+        // For Android, we want to be sure it's really "Running"
+        if (state == "Running")
         {
-            // Already authenticated — go straight to main window
-            var mainWindow = new MainWindow { DataContext = new MainWindowViewModel() };
-            desktop.MainWindow = mainWindow;
-            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
-            mainWindow.Show();
+            _log.Info("[Startup] Authenticated. Opening Dashboard.");
+            NavigateToMain(lifetime);
         }
         else
         {
-            // Need to login
-            var loginWindow = new LoginWindow { DataContext = new LoginViewModel() };
-            desktop.MainWindow = loginWindow;
-            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
-            loginWindow.Show();
+            _log.Info("[Startup] Not authenticated or transition needed. Opening Login.");
+            NavigateToLogin(lifetime);
         }
+    }
+
+    private void NavigateToMain(object lifetime)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+            var vm = new MainWindowViewModel();
+            if (lifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                var win = new MainWindow { DataContext = vm };
+                desktop.MainWindow = win;
+                desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
+                win.Show();
+            }
+            else if (lifetime is ISingleViewApplicationLifetime singleView)
+            {
+                singleView.MainView = new MainView { DataContext = vm };
+            }
+        });
+    }
+
+    private void NavigateToLogin(object lifetime)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+            var vm = new LoginViewModel();
+            vm.LoginSucceeded += () => NavigateToMain(lifetime);
+
+            if (lifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                var win = new LoginWindow { DataContext = vm };
+                desktop.MainWindow = win;
+                desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
+                win.Show();
+            }
+            else if (lifetime is ISingleViewApplicationLifetime singleView)
+            {
+                singleView.MainView = new LoginView { DataContext = vm };
+            }
+        });
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

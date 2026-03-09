@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace EchoLink.Services;
 
@@ -24,6 +25,8 @@ public class TailscaleService
 
     private const string HeadscaleServer = "https://echo-link.app";
     private const string HeadscaleHost = "echo-link.app";
+
+    public INativeMeshBridge? NativeBridge { get; set; }
 
     /// <summary>
     /// Waits for the daemon to reach Running state by polling the CLI.
@@ -49,6 +52,12 @@ public class TailscaleService
 
     public void StartDaemon()
     {
+        if (OperatingSystem.IsAndroid())
+        {
+            _log.Info("[Tailscale] Android detected. Daemon is managed by EchoLinkForegroundService.");
+            return;
+        }
+
         _log.Info($"[Tailscale] OS: {Environment.OSVersion} | IsWindows={OperatingSystem.IsWindows()}");
         _log.Info($"[Tailscale] AppBase: {AppDomain.CurrentDomain.BaseDirectory}");
 
@@ -82,8 +91,6 @@ public class TailscaleService
         _log.Info($"[Tailscale] Socket/pipe path: {_socketPath}");
 
         // 4. On Windows: add firewall allow-rules BEFORE starting the daemon.
-        //    When an exe runs with CreateNoWindow=true, Windows Firewall silently
-        //    blocks it without ever showing the "allow?" popup.
         if (OperatingSystem.IsWindows())
         {
             string cliPath = Path.Combine(appDir, "Binaries", "tailscale.exe");
@@ -91,16 +98,13 @@ public class TailscaleService
             EnsureWindowsFirewallRule(cliPath, "EchoLink tailscale CLI");
         }
 
-        // 5. DNS pre-check: resolve the headscale server from C#.
-        //    If this works but tailscaled still can't resolve it, the cause
-        //    is firewall or process-level DNS isolation.
+        // 5. DNS pre-check
         RunDnsPreCheck();
 
         string arguments = $"--state=\"{stateFile}\" --socket=\"{_socketPath}\" --tun=userspace-networking --socks5-server=localhost:1055";
 
         _log.Info($"[Tailscale] Starting daemon: {binaryPath} {arguments}");
 
-        // 6. Configure it to run invisibly in the background
         var startInfo = new ProcessStartInfo
         {
             FileName = binaryPath,
@@ -111,13 +115,11 @@ public class TailscaleService
             RedirectStandardError = true
         };
 
-        // 7. Launch it
         try
         {
             _daemonProcess = Process.Start(startInfo)!;
             _log.Info($"[Tailscale] Daemon started (PID {_daemonProcess.Id})");
 
-            // Pipe daemon output into the in-app log so it's visible in the debug console
             _daemonProcess.OutputDataReceived += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
@@ -133,7 +135,6 @@ public class TailscaleService
             _daemonProcess.BeginOutputReadLine();
             _daemonProcess.BeginErrorReadLine();
 
-            // Log prominently if the daemon exits unexpectedly
             _daemonProcess.EnableRaisingEvents = true;
             _daemonProcess.Exited += (_, _) =>
             {
@@ -142,11 +143,9 @@ public class TailscaleService
                     int code = -1;
                     try { code = _daemonProcess.ExitCode; } catch { }
                     _log.Error($"[Tailscale] !!! Daemon exited unexpectedly (exit code {code}) !!!");
-                    _log.Error("[Tailscale] CLI commands will time out until the daemon is restarted.");
                 }
             };
 
-            // Deferred health check — just checks if the process is alive.
             _ = Task.Run(async () =>
             {
                 await Task.Delay(3000);
@@ -164,21 +163,13 @@ public class TailscaleService
         }
     }
 
-    // ── Windows firewall helper ─────────────────────────────────────────────
-
     private void EnsureWindowsFirewallRule(string exePath, string ruleName)
     {
         try
         {
-            // Delete any stale rules first (ignore errors)
             RunNetsh($"advfirewall firewall delete rule name=\"{ruleName}\"");
-
-            // Outbound — needed for DNS, HTTPS to headscale, DERP relays
             RunNetsh($"advfirewall firewall add rule name=\"{ruleName}\" dir=out action=allow program=\"{exePath}\" enable=yes profile=any");
-
-            // Inbound — needed for peer-to-peer WireGuard connections
             RunNetsh($"advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow program=\"{exePath}\" enable=yes profile=any");
-
             _log.Info($"[Firewall] Added allow rules for {Path.GetFileName(exePath)}");
         }
         catch (Exception ex)
@@ -201,37 +192,14 @@ public class TailscaleService
         proc.WaitForExit(5000);
     }
 
-    // ── DNS pre-check + hosts-file workaround ─────────────────────────────
-
-    /// <summary>
-    /// Resolves the headscale server from C# and, on Windows, writes the
-    /// result into the system hosts file so tailscaled.exe can resolve it
-    /// too.  Tailscale's Go-based DNS path on Windows is unreliable when
-    /// the daemon runs with --tun=userspace-networking (it flushes the DNS
-    /// cache and its internal resolver has empty forwarders).
-    /// </summary>
     private void RunDnsPreCheck()
     {
         try
         {
             var addresses = Dns.GetHostAddresses(HeadscaleHost);
-            if (addresses.Length == 0)
-            {
-                _log.Warning($"[DNS] Pre-check: {HeadscaleHost} resolved to 0 addresses.");
-                return;
-            }
+            if (addresses.Length == 0) return;
 
-            // Prefer IPv4
-            string ip = addresses[0].ToString();
-            foreach (var addr in addresses)
-            {
-                if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                {
-                    ip = addr.ToString();
-                    break;
-                }
-            }
-
+            string ip = addresses.First(a => a.AddressFamily == AddressFamily.InterNetwork).ToString();
             _log.Info($"[DNS] Pre-check OK: {HeadscaleHost} -> {ip}");
 
             if (OperatingSystem.IsWindows())
@@ -239,41 +207,24 @@ public class TailscaleService
         }
         catch (Exception ex)
         {
-            _log.Error($"[DNS] Pre-check FAILED: Cannot resolve {HeadscaleHost}: {ex.Message}");
-            _log.Error("[DNS] Tailscale login will likely fail. Check your internet / DNS settings.");
+            _log.Error($"[DNS] Pre-check FAILED: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// Ensures the Windows hosts file contains an entry mapping
-    /// <paramref name="host"/> to <paramref name="ip"/>.
-    /// Requires admin (the app already runs elevated via the manifest).
-    /// </summary>
     private void EnsureHostsEntry(string host, string ip)
     {
         const string hostsPath = @"C:\Windows\System32\drivers\etc\hosts";
         const string marker = "# Added by EchoLink";
-
         try
         {
             string content = File.Exists(hostsPath) ? File.ReadAllText(hostsPath) : "";
-
-            // Check if there's already a correct entry
             string desiredLine = $"{ip}  {host}  {marker}";
-            if (content.Contains(desiredLine))
-            {
-                _log.Info($"[DNS] Hosts file already has correct entry for {host}");
-                return;
-            }
+            if (content.Contains(desiredLine)) return;
 
-            // Remove any stale EchoLink entries for this host
             var lines = content.Split('\n').ToList();
             lines.RemoveAll(l => l.Contains(host) && l.Contains(marker));
-
-            // Add the new entry
             lines.Add(desiredLine);
             File.WriteAllText(hostsPath, string.Join('\n', lines));
-
             _log.Info($"[DNS] Wrote hosts entry: {ip}  {host}");
         }
         catch (Exception ex)
@@ -284,6 +235,8 @@ public class TailscaleService
 
     public void StopDaemon()
     {
+        if (OperatingSystem.IsAndroid()) return;
+
         if (_daemonProcess != null && !_daemonProcess.HasExited)
         {
             _stopping = true;
@@ -297,11 +250,8 @@ public class TailscaleService
             {
                 _log.Warning($"[Tailscale] Error stopping daemon: {ex.Message}");
             }
-            _log.Info("[Tailscale] Daemon stopped.");
         }
     }
-
-    // ── CLI helpers ─────────────────────────────────────────────────────────
 
     private string CliPath()
     {
@@ -317,14 +267,11 @@ public class TailscaleService
         return arguments;
     }
 
-    /// <summary>
-    /// Runs the bundled tailscale CLI and captures stdout + stderr.
-    /// Each invocation has a hard 10-second timeout so a hung process
-    /// (e.g. daemon pipe not ready) never blocks the caller forever.
-    /// </summary>
     public async Task<(string Stdout, string Stderr)> RunCliAsync(
         string arguments, CancellationToken ct = default)
     {
+        if (OperatingSystem.IsAndroid()) return ("", "Not supported on Android");
+
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
         var merged = timeoutCts.Token;
@@ -332,13 +279,7 @@ public class TailscaleService
         var fullArgs = PrefixSocketArg(arguments);
         var cliPath = CliPath();
 
-        if (!File.Exists(cliPath))
-        {
-            _log.Error($"[CLI] Binary not found: {cliPath}");
-            return ("", "binary not found");
-        }
-
-        _log.Debug($"[CLI] > {Path.GetFileName(cliPath)} {fullArgs}");
+        if (!File.Exists(cliPath)) return ("", "binary not found");
 
         var psi = new ProcessStartInfo
         {
@@ -347,9 +288,7 @@ public class TailscaleService
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding  = Encoding.UTF8
+            RedirectStandardError = true
         };
 
         var stdoutSb = new StringBuilder();
@@ -359,50 +298,30 @@ public class TailscaleService
         proc.OutputDataReceived += (_, e) => { if (e.Data != null) stdoutSb.AppendLine(e.Data); };
         proc.ErrorDataReceived  += (_, e) => { if (e.Data != null) stderrSb.AppendLine(e.Data); };
 
-        try
-        {
-            proc.Start();
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[CLI] Failed to start process: {ex.Message}");
-            return ("", ex.Message);
-        }
+        try { proc.Start(); } catch (Exception ex) { return ("", ex.Message); }
 
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
 
-        try
-        {
-            await proc.WaitForExitAsync(merged);
-        }
+        try { await proc.WaitForExitAsync(merged); }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(entireProcessTree: true); } catch { /* already dead */ }
-
-            if (ct.IsCancellationRequested)
-                throw;  // propagate caller-requested cancellation
-
-            _log.Warning($"[CLI] Timed out after 10 s: {arguments}");
-            _log.Warning("[CLI] If this happens repeatedly, the daemon may not be running.");
+            try { proc.Kill(entireProcessTree: true); } catch { }
             return ("", "timed out");
         }
 
-        var stdout = stdoutSb.ToString();
-        var stderr = stderrSb.ToString();
-
-        if (!string.IsNullOrWhiteSpace(stderr))
-            _log.Debug($"[CLI] stderr: {stderr.Trim()}");
-        if (proc.ExitCode != 0)
-            _log.Warning($"[CLI] Exit code {proc.ExitCode} for: {arguments}");
-
-        return (stdout, stderr);
+        return (stdoutSb.ToString(), stderrSb.ToString());
     }
-
-    // ── Auth state ───────────────────────────────────────────────────────────
 
     public async Task<string> GetBackendStateAsync(CancellationToken ct = default)
     {
+        if (OperatingSystem.IsAndroid())
+        {
+            var state = await Task.Run(() => GetAndroidNativeState());
+            _log.Debug($"[Tailscale] Android Native State: {state}");
+            return state;
+        }
+
         try
         {
             var (stdout, _) = await RunCliAsync("status --json", ct);
@@ -411,22 +330,23 @@ public class TailscaleService
             using var doc = JsonDocument.Parse(stdout);
             if (doc.RootElement.TryGetProperty("BackendState", out var state))
                 return state.GetString() ?? "Unknown";
+            return "Unknown";
+        }
+        catch { return "Unknown"; }
+    }
 
-            return "Unknown";
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _log.Debug($"[Tailscale] GetBackendState error: {ex.Message}");
-            return "Unknown";
-        }
+    private string GetAndroidNativeState()
+    {
+        return NativeBridge?.GetBackendState() ?? "Unknown";
     }
 
     public async Task<string?> GetTailscaleIpAsync(CancellationToken ct = default)
     {
+        if (OperatingSystem.IsAndroid())
+        {
+             return await Task.Run(() => GetAndroidNativeIp());
+        }
+
         try
         {
             var (stdout, _) = await RunCliAsync("status --json", ct);
@@ -440,44 +360,57 @@ public class TailscaleService
                 foreach (var ip in ips.EnumerateArray())
                 {
                     var s = ip.GetString();
-                    if (s != null && !s.Contains(':'))
-                        return s;
+                    if (s != null && !s.Contains(':')) return s;
                 }
                 return ips[0].GetString();
             }
             return null;
         }
-        catch
-        {
-            return null;
-        }
+        catch { return null; }
     }
 
-    // ── Network status (real device list) ───────────────────────────────────
+    private string? GetAndroidNativeIp()
+    {
+        return NativeBridge?.GetTailscaleIp();
+    }
 
     public async Task<(string? SelfIp, System.Collections.Generic.List<Models.Device> Devices)>
         GetNetworkStatusAsync(CancellationToken ct = default)
     {
+        if (OperatingSystem.IsAndroid())
+        {
+            var androidDevices = new System.Collections.Generic.List<Models.Device>();
+            try
+            {
+                var json = NativeBridge?.GetPeerListJson();
+                if (!string.IsNullOrEmpty(json))
+                {
+                    var peerDevices = JsonSerializer.Deserialize<System.Collections.Generic.List<Models.Device>>(json, 
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (peerDevices != null)
+                        androidDevices.AddRange(peerDevices);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"[Tailscale] Android peer parse failed: {ex.Message}");
+            }
+            return (GetAndroidNativeIp(), androidDevices);
+        }
+
         var devices = new System.Collections.Generic.List<Models.Device>();
         string? selfIp = null;
 
         try
         {
             var (stdout, _) = await RunCliAsync("status --json", ct);
-            if (string.IsNullOrWhiteSpace(stdout))
-                return (null, devices);
+            if (string.IsNullOrWhiteSpace(stdout)) return (null, devices);
 
             using var doc = JsonDocument.Parse(stdout);
             var root = doc.RootElement;
 
-            // Check BackendState — only parse devices if the daemon is Running
-            if (root.TryGetProperty("BackendState", out var stateEl))
-            {
-                var state = stateEl.GetString();
-                _log.Debug($"[CLI] BackendState: {state}");
-                if (state != "Running")
-                    return (null, devices);
-            }
+            if (root.TryGetProperty("BackendState", out var stateEl) && stateEl.GetString() != "Running")
+                return (null, devices);
 
             if (root.TryGetProperty("Self", out var self))
             {
@@ -485,17 +418,13 @@ public class TailscaleService
                 devices.Add(ParseDevice(self, isSelf: true));
             }
 
-            if (root.TryGetProperty("Peer", out var peers) &&
-                peers.ValueKind == JsonValueKind.Object)
+            if (root.TryGetProperty("Peer", out var peers) && peers.ValueKind == JsonValueKind.Object)
             {
                 foreach (var peer in peers.EnumerateObject())
                     devices.Add(ParseDevice(peer.Value, isSelf: false));
             }
         }
-        catch (Exception ex)
-        {
-            _log.Error($"[Tailscale] Failed to parse status: {ex.Message}");
-        }
+        catch (Exception ex) { _log.Error($"[Tailscale] Failed to parse status: {ex.Message}"); }
 
         return (selfIp, devices);
     }
@@ -506,8 +435,7 @@ public class TailscaleService
         foreach (var ip in ips.EnumerateArray())
         {
             var s = ip.GetString();
-            if (s != null && !s.Contains(':'))
-                return s;
+            if (s != null && !s.Contains(':')) return s;
         }
         return ips.GetArrayLength() > 0 ? ips[0].GetString() : null;
     }
@@ -528,11 +456,8 @@ public class TailscaleService
         };
 
         string lastSeen = "";
-        if (node.TryGetProperty("LastSeen", out var ls) && ls.ValueKind == JsonValueKind.String)
-        {
-            if (DateTime.TryParse(ls.GetString(), out var dt))
-                lastSeen = dt.ToLocalTime().ToString("g");
-        }
+        if (node.TryGetProperty("LastSeen", out var ls) && DateTime.TryParse(ls.GetString(), out var dt))
+            lastSeen = dt.ToLocalTime().ToString("g");
 
         return new Models.Device
         {
@@ -545,31 +470,37 @@ public class TailscaleService
             IsSelf = isSelf
         };
     }
-
-    // ── Login ────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Runs "tailscale up --login-server=..." to both authenticate AND bring
-    /// the VPN up.  We use "up" instead of "login" because on Windows the
-    /// daemon tears down the VPN when the "login" CLI exits (each CLI
-    /// disconnection triggers a profile-switch restart).  "up" stays
-    /// connected until the daemon reaches Running state before exiting,
-    /// so when it exits with code 0 the VPN IS up.
-    ///
-    /// If auth is needed, "up" prints the same auth URL as "login" does.
-    /// </summary>
-    public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = default)
+public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = default)
+{
+    if (OperatingSystem.IsAndroid())
     {
+        // On Android, we poll the native bridge for the URL.
+        // We also try to bring the node up to force tsnet to generate the URL if missing.
+        _log.Info("[Tailscale] Android Login: Waiting for URL from native bridge...");
+
+        // Trigger a bring-up in the background to kickstart URL generation
+        _ = TryBringUpAsync(TimeSpan.FromSeconds(5));
+
+        while (!ct.IsCancellationRequested)
+        {
+            var url = GetAndroidNativeLoginUrl();
+            if (!string.IsNullOrEmpty(url))
+            {
+                _log.Info($"[Tailscale] Android Login: URL captured: {url}");
+                onAuthUrl(url);
+                break;
+            }
+            await Task.Delay(1000, ct);
+        }
+        return;
+    }
+
+
         string cliPath = CliPath();
         string unattended = OperatingSystem.IsWindows() ? " --unattended" : "";
-        string ssh = OperatingSystem.IsWindows() ? "" : " --ssh";
-        string args = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}{ssh}");
+        string args = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}");
 
-        if (!File.Exists(cliPath))
-        {
-            _log.Error($"[Tailscale] CLI binary not found: {cliPath}");
-            throw new Exception($"tailscale CLI not found at {cliPath}");
-        }
+        if (!File.Exists(cliPath)) throw new Exception($"tailscale CLI not found at {cliPath}");
 
         var psi = new ProcessStartInfo
         {
@@ -578,105 +509,61 @@ public class TailscaleService
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding  = Encoding.UTF8
+            RedirectStandardError = true
         };
-
-        _log.Info($"[Tailscale] Login cmd: {Path.GetFileName(cliPath)} {args}");
 
         bool urlOpened = false;
         var capturedOutput = new StringBuilder();
 
-        void TryExtractUrl(string? line)
-        {
-            if (urlOpened || string.IsNullOrWhiteSpace(line)) return;
-            int idx = line.IndexOf("https://", StringComparison.Ordinal);
-            if (idx >= 0)
-            {
-                urlOpened = true;
-                onAuthUrl(line[idx..].Trim());
-            }
-        }
-
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         proc.OutputDataReceived += (_, e) =>
         {
             if (e.Data == null) return;
             capturedOutput.AppendLine(e.Data);
-            _log.Debug($"[tailscale up stdout] {e.Data}");
-            TryExtractUrl(e.Data);
+            if (!urlOpened && e.Data.Contains("https://"))
+            {
+                int idx = e.Data.IndexOf("https://");
+                urlOpened = true;
+                onAuthUrl(e.Data[idx..].Trim());
+            }
         };
         proc.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data == null) return;
+             if (e.Data == null) return;
             capturedOutput.AppendLine(e.Data);
-            _log.Debug($"[tailscale up stderr] {e.Data}");
-            TryExtractUrl(e.Data);
+             if (!urlOpened && e.Data.Contains("https://"))
+            {
+                int idx = e.Data.IndexOf("https://");
+                urlOpened = true;
+                onAuthUrl(e.Data[idx..].Trim());
+            }
         };
 
-        try
-        {
-            proc.Start();
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[Tailscale] Failed to start 'tailscale up': {ex.Message}");
-            throw;
-        }
-
+        proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        _log.Info("[Tailscale] 'tailscale up' started — waiting for auth URL or Running state...");
 
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            _log.Info("[Tailscale] 'tailscale up' cancelled — killing process.");
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            return;
-        }
-
-        int exitCode = proc.ExitCode;
-        _log.Info($"[Tailscale] 'tailscale up' exited (code {exitCode})");
-
-        if (exitCode != 0)
-        {
-            string detail = capturedOutput.ToString().Trim();
-            string msg = string.IsNullOrWhiteSpace(detail)
-                ? $"tailscale up exited with code {exitCode}"
-                : detail;
-            _log.Error($"[Tailscale] 'tailscale up' failed: {msg}");
-            throw new Exception(msg);
-        }
-
-        _log.Info("[Tailscale] 'tailscale up' completed successfully (daemon reached Running).");
+        await proc.WaitForExitAsync(ct);
+        if (proc.ExitCode != 0) throw new Exception(capturedOutput.ToString());
     }
 
-    /// <summary>
-    /// Attempts to bring the daemon to Running state by running
-    /// "tailscale up --login-server=...".  Used at app startup to restore
-    /// a previously authenticated session.
-    ///
-    /// Returns true if the daemon reached Running state before the timeout.
-    /// Returns false if auth is required (the command prints an auth URL
-    /// and waits indefinitely) or the daemon didn't come up in time.
-    /// </summary>
+    private string? GetAndroidNativeLoginUrl()
+    {
+        return NativeBridge?.GetLoginUrl();
+    }
+
     public async Task<bool> TryBringUpAsync(TimeSpan timeout)
     {
-        string cliPath = CliPath();
-        if (!File.Exists(cliPath))
+        if (OperatingSystem.IsAndroid())
         {
-            _log.Error($"[Tailscale] CLI binary not found for TryBringUp: {cliPath}");
-            return false;
+            return await WaitForDaemonRunningAsync(timeout);
         }
 
+        string cliPath = CliPath();
+        if (!File.Exists(cliPath)) return false;
+
         string unattended = OperatingSystem.IsWindows() ? " --unattended" : "";
-        string ssh = OperatingSystem.IsWindows() ? "" : " --ssh";
-        string args = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}{ssh}");
+        string args = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}");
 
         var psi = new ProcessStartInfo
         {
@@ -685,99 +572,51 @@ public class TailscaleService
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding  = Encoding.UTF8
+            RedirectStandardError = true
         };
-
-        _log.Info($"[Tailscale] TryBringUp: {Path.GetFileName(cliPath)} {args}");
 
         bool authUrlSeen = false;
-
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data == null) return;
-            _log.Debug($"[TryBringUp stdout] {e.Data}");
-            if (e.Data.Contains("https://"))
-                authUrlSeen = true;
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data == null) return;
-            _log.Debug($"[TryBringUp stderr] {e.Data}");
-            if (e.Data.Contains("https://"))
-                authUrlSeen = true;
-        };
+        proc.OutputDataReceived += (_, e) => { if (e.Data?.Contains("https://") == true) authUrlSeen = true; };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data?.Contains("https://") == true) authUrlSeen = true; };
 
-        try
-        {
-            proc.Start();
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[Tailscale] TryBringUp failed to start: {ex.Message}");
-            return false;
-        }
-
+        try { proc.Start(); } catch { return false; }
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
 
         using var cts = new CancellationTokenSource(timeout);
-
         try
         {
-            // Poll: either the process exits, an auth URL appears, or we time out.
-            while (!proc.HasExited && !authUrlSeen)
-            {
-                await Task.Delay(500, cts.Token);
-            }
-
-            if (authUrlSeen)
-            {
-                // Auth needed — user must go through the login flow.
-                _log.Info("[Tailscale] TryBringUp: auth URL seen → needs login.");
-                try { proc.Kill(entireProcessTree: true); } catch { }
-                return false;
-            }
-
-            // Process exited on its own — check exit code.
-            if (proc.ExitCode == 0)
-            {
-                _log.Info("[Tailscale] TryBringUp: 'tailscale up' exited with code 0 → Running.");
-                return true;
-            }
-
-            _log.Warning($"[Tailscale] TryBringUp: 'tailscale up' exited with code {proc.ExitCode}.");
-            return false;
+            while (!proc.HasExited && !authUrlSeen) await Task.Delay(500, cts.Token);
+            return !authUrlSeen && proc.ExitCode == 0;
         }
-        catch (OperationCanceledException)
-        {
-            // Timeout
-            _log.Warning("[Tailscale] TryBringUp: timed out.");
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            return false;
-        }
+        catch { return false; }
     }
 
-    // ── Logout ───────────────────────────────────────────────────────────────
-
-        public async Task ExposeLocalPortsAsync(CancellationToken ct = default)
+    public async Task ExposeLocalPortsAsync(CancellationToken ct = default)
     {
+        if (OperatingSystem.IsAndroid())
+        {
+            _log.Info("[Tailscale] Android: Native mesh node handles port exposure internally.");
+            return;
+        }
+
         if (OperatingSystem.IsWindows())
         {
-            _log.Info("[Tailscale] Setting up userspace port forwarding for SSH and Pairing...");
-            await RunCliAsync("serve --bg --tcp 22 tcp://127.0.0.1:22", ct);
+            _log.Info("[Tailscale] Setting up userspace port forwarding for SSH (2222) and Pairing (44444)...");
+            await RunCliAsync("serve --bg --tcp 2222 tcp://127.0.0.1:22", ct);
             await RunCliAsync("serve --bg --tcp 44444 tcp://127.0.0.1:44444", ct);
         }
     }
 
     public async Task LogoutAsync(CancellationToken ct = default)
     {
-        _log.Info("[Tailscale] Logging out...");
-        var (_, stderr) = await RunCliAsync("logout", ct);
-        if (!string.IsNullOrWhiteSpace(stderr))
-            _log.Warning($"[tailscale logout] {stderr.Trim()}");
-        _log.Info("[Tailscale] Logged out.");
+        if (OperatingSystem.IsAndroid())
+        {
+            _log.Info("[Tailscale] Android Logout: Calling native bridge logout...");
+            NativeBridge?.LogoutNode();
+            return;
+        }
+        await RunCliAsync("logout", ct);
     }
 }
