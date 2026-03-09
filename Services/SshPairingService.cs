@@ -250,13 +250,10 @@ namespace EchoLink.Services
                 }
                 else if (OperatingSystem.IsWindows())
                 {
-                    // For Windows, ensure correct ACLs on the new authorized_keys file
-                    var psi = new ProcessStartInfo("powershell", $"-NoProfile -Command \"icacls '{authKeysPath}' /inheritance:r; icacls '{authKeysPath}' /grant SYSTEM:`(F`); icacls '{authKeysPath}' /grant $env:USERNAME:`(F`)\"")
-                    {
-                        CreateNoWindow = true,
-                        UseShellExecute = false
-                    };
-                    Process.Start(psi)?.WaitForExit();
+                    // For Windows, ensure correct ACLs on the new authorized_keys file safely
+                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /inheritance:r") { CreateNoWindow = true })?.WaitForExit();
+                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant SYSTEM:(F)") { CreateNoWindow = true })?.WaitForExit();
+                    Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant \"{Environment.UserName}:(F)\"") { CreateNoWindow = true })?.WaitForExit();
                 }
             }
 
