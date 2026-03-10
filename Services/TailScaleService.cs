@@ -652,11 +652,11 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
 
     public async Task ExposeLocalPortsAsync(CancellationToken ct = default)
     {
-        _log.Info("[Tailscale] Setting up port forwarding (SSH=22, Pairing=44444)...");
+        _log.Info("[Tailscale] Setting up port forwarding (SSH=2222, Pairing=44444)...");
 
-        // We strictly expose port 22 (for all SSH payloads) and Port 44444 (for unauthenticated Key-Pairing).
+        // We strictly expose port 2222 (for all SSH payloads) and Port 44444 (for unauthenticated Key-Pairing).
         // Clipboard and all future stream services now ride inside the encrypted SSH stream natively!
-        foreach (var (port, label) in new (int, string)[] { (22, "SSH"), (44444, "Pairing") })
+        foreach (var (port, label) in new (int, string)[] { (2222, "SSH"), (44444, "Pairing") })
         {
             var (stdout, stderr) = await RunCliAsync($"serve --bg --tcp={port} tcp://127.0.0.1:{port}", ct);
             if (!string.IsNullOrWhiteSpace(stdout))
@@ -680,7 +680,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
         }
 
         _log.Info("[Tailscale] Setting up userspace port forwarding for SSH (2222) and Pairing (44444)...");
-        await RunCliAsync("serve --bg --tcp 2222 tcp://127.0.0.1:22", ct);
+        await RunCliAsync("serve --bg --tcp 2222 tcp://127.0.0.1:2222", ct);
         await RunCliAsync("serve --bg --tcp 44444 tcp://127.0.0.1:44444", ct);
     }
 

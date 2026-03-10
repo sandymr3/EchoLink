@@ -43,7 +43,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private async System.Threading.Tasks.Task InitializeSetupAsync()
     {
-        // Expose ports 22 and 44444 to the Tailnet so Windows can receive files in userspace-networking
+        // Expose ports 2222 and 44444 to the Tailnet so Windows can receive files in userspace-networking
         // On Android, this triggers the Go SSH/SFTP server to start.
         await TailscaleService.Instance.ExposeLocalPortsAsync();
 

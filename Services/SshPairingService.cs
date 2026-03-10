@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -125,13 +125,14 @@ namespace EchoLink.Services
                     string incomingPayload = await reader.ReadLineAsync();
                     if (string.IsNullOrWhiteSpace(incomingPayload)) return;
 
-                    // Payload should be: "HOSTNAME|||USERNAME|||PUBLIC_KEY"
+                    // Payload should be: "HOSTNAME|||USERNAME|||IP_ADDRESS|||PUBLIC_KEY"
                     var parts = incomingPayload.Split("|||");
-                    if (parts.Length != 3) return;
+                    if (parts.Length != 4) return;
 
                     string hostname = parts[0];
                     string remoteUsername = parts[1];
-                    string publicKey = parts[2].Trim();
+                    string remoteIp = parts[2];
+                    string publicKey = parts[3].Trim();
 
                     if (!publicKey.StartsWith("ssh-ed25519") && !publicKey.StartsWith("ssh-rsa"))
                     {
@@ -155,6 +156,13 @@ namespace EchoLink.Services
                         if (!alreadyPaired)
                         {
                             await AddToAuthorizedKeysAsync(publicKey);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(remoteIp) && !string.IsNullOrWhiteSpace(remoteUsername))
+                        {
+                            var settings = SettingsService.Instance.Load();
+                            settings.PeerUsernames[remoteIp] = remoteUsername;
+                            SettingsService.Instance.Save(settings);
                         }
                         
                         // Reply with our OS username so the sender knows who to SSH as
@@ -234,11 +242,28 @@ namespace EchoLink.Services
         public async Task<(bool Accepted, string? TargetUsername)> RequestPairingAsync(string targetIp, string myHostname, string myUsername)
         {
             string myPubKey = await GetMyPublicKeyAsync();
+            string myIp = await _tailscaleService.GetTailscaleIpAsync() ?? "Unknown";
 
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 
+                // 0. QUICK CHECK: Is OpenSSH running on the target? If not, bail before even attempting pairing
+                try 
+                {
+                    using var sshCheckClient = await ConnectViaSocks5Async(targetIp, 2222, cts.Token);
+                    if (sshCheckClient == null || !sshCheckClient.Connected)
+                    {
+                        LoggingService.Instance.Error($"OpenSSH daemon on target {targetIp} is not running or accessible. Cannot pair.");
+                        return (false, null);
+                    }
+                }
+                catch
+                {
+                    LoggingService.Instance.Error($"OpenSSH daemon on target {targetIp} is not running or accessible. Cannot pair.");
+                    return (false, null);
+                }
+
                 // Route through SOCKS5 proxy since we are running userspace tailscale
                 using var client = await ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
                 
@@ -252,7 +277,7 @@ namespace EchoLink.Services
                 using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
                 using var reader = new StreamReader(stream, Encoding.UTF8);
 
-                await writer.WriteLineAsync($"{myHostname}|||{myUsername}|||{myPubKey}");
+                await writer.WriteLineAsync($"{myHostname}|||{myUsername}|||{myIp}|||{myPubKey}");
 
                 string? response = await reader.ReadLineAsync();
 
@@ -316,3 +341,4 @@ namespace EchoLink.Services
         }
     }
 }
+

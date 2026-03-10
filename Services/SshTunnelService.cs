@@ -38,10 +38,10 @@ public class SshTunnelService
         {
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
 
-            // 1. Connect to peer's port 22 via our Tailscale SOCKS5 userspace proxy 
+            // 1. Connect to peer's port 2222 via our Tailscale SOCKS5 userspace proxy 
             var connectionInfo = new ConnectionInfo(
                 host, 
-                22, 
+                2222, 
                 username, 
                 ProxyTypes.Socks5, 
                 "127.0.0.1", 

@@ -56,9 +56,9 @@ public class ClipboardSyncService
 
         // Only log on the first failure and every 5 attempts after that
         if (fails == 1 || fails % 5 == 0)
-            _log.Warning($"MirrorClip: cannot reach {peerIp}:44444 (attempt {fails}). " +
+            _log.Warning($"MirrorClip: cannot reach {peerIp}:2222 (SSH) or 44444 (Pairing) (attempt {fails}). " +
                          $"Retrying in {seconds}s. Ensure EchoLink is running there and 'tailscale serve' " +
-                         $"exposed port 44444 on that device.");
+                         $"exposed ports 2222 and 44444 on that device.");
     }
 
     private void RecordPeerSuccess(string peerIp)
@@ -634,8 +634,9 @@ public class ClipboardSyncService
     }
 
     /// <summary>
-
-
+    /// Filters the network device list to only those eligible for clipboard sharing
+    /// based on online status and user-selection settings.
+    /// </summary>
     private static IEnumerable<Device> GetEligibleClipboardPeers(
         IEnumerable<Device> devices,
         SettingsData settings)

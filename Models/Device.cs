@@ -12,7 +12,7 @@ public partial class Device : ObservableObject
     [ObservableProperty] private string _lastSeen = string.Empty;
     [ObservableProperty] private bool _isSelf;
     [ObservableProperty] private bool _isPaired;
-    [ObservableProperty] private int _sftpPort = 22; // Default to 22
+    [ObservableProperty] private int _sftpPort = 2222; // Default to 2222
 
     public string StatusLabel => IsSelf ? "This device" : (IsOnline ? "Online" : "Offline");
     public string DeviceIcon => DeviceType switch
