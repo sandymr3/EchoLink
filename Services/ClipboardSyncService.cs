@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Collections.Concurrent;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using EchoLink.Models;
 
 namespace EchoLink.Services;
@@ -42,16 +43,19 @@ public class ClipboardSyncService
             return;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        _log.Info("MirrorClip: exposing clipboard port via Tailscale serve...");
         await TailscaleService.Instance.ExposeClipboardPortAsync(_cts.Token);
 
         _localAccountId = await TailscaleService.Instance.GetCurrentAccountIdAsync(_cts.Token)
             ?? "unknown-account";
+        _log.Info($"MirrorClip: local account ID = {_localAccountId}");
 
         _listenerTask = Task.Run(() => RunListenerAsync(_cts.Token), _cts.Token);
         _monitorTask = Task.Run(() => RunMonitorAsync(_cts.Token), _cts.Token);
         _reliabilityTask = Task.Run(() => RunReliabilityLoopAsync(_cts.Token), _cts.Token);
 
-        _log.Info("MirrorClip sync engine started.");
+        _log.Info("MirrorClip sync engine started (listener + monitor + reliability loops).");
     }
 
     public async Task StopAsync()
@@ -86,13 +90,18 @@ public class ClipboardSyncService
     {
         var text = await GetClipboardTextAsync();
         if (string.IsNullOrWhiteSpace(text))
+        {
+            _log.Warning("MirrorClip PushCurrentClipboard: clipboard was empty or unreadable.");
             return;
+        }
 
+        _log.Info($"MirrorClip PushCurrentClipboard: broadcasting {text.Length} chars...");
         await BroadcastClipboardAsync(text, ct);
     }
 
     private async Task RunMonitorAsync(CancellationToken ct)
     {
+        _log.Info("MirrorClip monitor loop started.");
         while (!ct.IsCancellationRequested)
         {
             try
@@ -126,6 +135,7 @@ public class ClipboardSyncService
                 }
 
                 _lastObservedHash = hash;
+                _log.Info($"MirrorClip monitor: new clipboard content detected ({text.Length} chars), broadcasting...");
                 await BroadcastClipboardAsync(text, ct);
             }
             catch (OperationCanceledException)
@@ -179,6 +189,10 @@ public class ClipboardSyncService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        _log.Info($"MirrorClip broadcast: {peers.Count} online peer(s) found. Self IP={sender}, Account={accountId}");
+        if (peers.Count == 0)
+            _log.Warning("MirrorClip broadcast: no peers found! Check that other devices are connected and online.");
+
         foreach (var peerIp in peers)
         {
             try
@@ -199,8 +213,10 @@ public class ClipboardSyncService
 
     private async Task RunListenerAsync(CancellationToken ct)
     {
+        _log.Info($"MirrorClip listener starting on port {ClipboardSyncPort}...");
         var listener = new TcpListener(IPAddress.Any, ClipboardSyncPort);
         listener.Start();
+        _log.Info($"MirrorClip listener bound to 0.0.0.0:{ClipboardSyncPort}");
         ct.Register(() => listener.Stop());
 
         try
@@ -286,17 +302,29 @@ public class ClipboardSyncService
         if (string.IsNullOrWhiteSpace(text))
             return;
 
-        var app = Avalonia.Application.Current;
-        if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
-            return;
-
-        var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
-        if (clipboard is null)
-            return;
-
         _suppressLocalUntilUtc = DateTime.UtcNow.AddSeconds(2);
         _lastObservedHash = ComputeHash(text);
-        await clipboard.SetTextAsync(text);
+
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            try
+            {
+                var app = Avalonia.Application.Current;
+                if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
+                    return;
+
+                var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
+                if (clipboard is null)
+                    return;
+
+                await clipboard.SetTextAsync(text);
+                _log.Info($"MirrorClip: applied remote clipboard ({text.Length} chars) to local device.");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"MirrorClip: failed to apply remote clipboard: {ex.Message}");
+            }
+        });
     }
 
     private async Task<bool> IsSameAccountAsync(string? senderAccountId, CancellationToken ct)
@@ -327,24 +355,35 @@ public class ClipboardSyncService
         return Convert.ToBase64String(hash);
     }
 
-    private static async Task<string?> GetClipboardTextAsync()
+    private async Task<string?> GetClipboardTextAsync()
     {
-        var app = Avalonia.Application.Current;
-        if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
-            return null;
+        try
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                var app = Avalonia.Application.Current;
+                if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
+                    return null;
 
-        var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
-        if (clipboard is null)
-            return null;
+                var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
+                if (clipboard is null)
+                    return null;
 
-        return await clipboard.GetTextAsync();
+                return await clipboard.GetTextAsync();
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"MirrorClip: clipboard read failed: {ex.Message}");
+            return null;
+        }
     }
 
     private async Task<bool> SendClipToPeerAsync(string targetIp, ClipboardSyncMessage message, CancellationToken ct)
     {
-        using var client = await ConnectViaSocks5Async(targetIp, ClipboardSyncPort, ct);
+        using var client = await ConnectToPeerAsync(targetIp, ClipboardSyncPort, ct);
         if (client is null || !client.Connected)
-            throw new InvalidOperationException("Could not connect via SOCKS5.");
+            throw new InvalidOperationException($"Could not connect to {targetIp}:{ClipboardSyncPort}");
 
         using var stream = client.GetStream();
         using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
@@ -363,6 +402,7 @@ public class ClipboardSyncService
         }
         catch (OperationCanceledException)
         {
+            _log.Debug($"MirrorClip: ACK timeout from {targetIp}");
             return false;
         }
 
@@ -486,20 +526,58 @@ public class ClipboardSyncService
         }
     }
 
-    private static async Task<TcpClient?> ConnectViaSocks5Async(string targetIp, int port, CancellationToken ct)
+    /// <summary>
+    /// Tries SOCKS5 proxy first (for userspace networking), then falls back to direct TCP.
+    /// </summary>
+    private async Task<TcpClient?> ConnectToPeerAsync(string targetIp, int port, CancellationToken ct)
+    {
+        // Try SOCKS5 first
+        var socks = await ConnectViaSocks5Async(targetIp, port, ct);
+        if (socks is not null)
+            return socks;
+
+        // Fallback: direct TCP (works if Tailscale kernel networking or same LAN)
+        _log.Debug($"MirrorClip: SOCKS5 failed for {targetIp}:{port}, trying direct TCP...");
+        var direct = new TcpClient();
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(4));
+            await direct.ConnectAsync(targetIp, port, timeout.Token);
+            _log.Info($"MirrorClip: direct TCP connection to {targetIp}:{port} succeeded.");
+            return direct;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"MirrorClip: direct TCP to {targetIp}:{port} also failed: {ex.Message}");
+            direct.Dispose();
+            return null;
+        }
+    }
+
+    private async Task<TcpClient?> ConnectViaSocks5Async(string targetIp, int port, CancellationToken ct)
     {
         var client = new TcpClient();
         try
         {
-            await client.ConnectAsync("127.0.0.1", 1055, ct);
+            // Step 1: Connect to SOCKS5 proxy
+            using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectTimeout.CancelAfter(TimeSpan.FromSeconds(3));
+            await client.ConnectAsync("127.0.0.1", 1055, connectTimeout.Token);
             var stream = client.GetStream();
 
+            // Step 2: SOCKS5 handshake
             await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, ct);
             byte[] response1 = new byte[2];
             int read = await stream.ReadAsync(response1, ct);
             if (read != 2 || response1[1] != 0x00)
+            {
+                _log.Debug($"MirrorClip SOCKS5: handshake failed (read={read}, method={response1[1]})");
+                client.Dispose();
                 return null;
+            }
 
+            // Step 3: SOCKS5 connect request
             byte[] destIpBytes = IPAddress.Parse(targetIp).GetAddressBytes();
             byte[] portBytes = BitConverter.GetBytes((short)port);
             if (BitConverter.IsLittleEndian) Array.Reverse(portBytes);
@@ -517,12 +595,18 @@ public class ClipboardSyncService
             byte[] response2 = new byte[32];
             read = await stream.ReadAsync(response2, ct);
             if (read < 2 || response2[1] != 0x00)
+            {
+                _log.Debug($"MirrorClip SOCKS5: connect to {targetIp}:{port} rejected (read={read}, reply=0x{response2[1]:X2})");
+                client.Dispose();
                 return null;
+            }
 
+            _log.Debug($"MirrorClip SOCKS5: connected to {targetIp}:{port}");
             return client;
         }
-        catch
+        catch (Exception ex)
         {
+            _log.Debug($"MirrorClip SOCKS5: exception connecting to {targetIp}:{port}: {ex.Message}");
             client.Dispose();
             return null;
         }
