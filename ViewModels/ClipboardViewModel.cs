@@ -52,6 +52,12 @@ public partial class ClipboardViewModel : ViewModelBase
     {
         StatusText = value ? "MirrorClip active — syncing" : "MirrorClip paused";
         _log.Info($"Clipboard MirrorClip {(value ? "enabled" : "disabled")}.");
+
+        // Persist the toggle so the background monitor loop picks it up
+        var data = _settings.Load();
+        data.MirrorClipEnabled = value;
+        _settings.Save(data);
+        IsMirrorClipActive = value;
     }
 
     [RelayCommand]
