@@ -9,9 +9,14 @@ namespace EchoLink.ViewModels;
 public partial class ClipboardViewModel : ViewModelBase
 {
     private readonly LoggingService _log = LoggingService.Instance;
+    private readonly SettingsService _settings = SettingsService.Instance;
 
     [ObservableProperty] private bool _isAutoSyncEnabled;
     [ObservableProperty] private string _statusText = "Idle";
+    [ObservableProperty] private bool _isMirrorClipActive;
+    [ObservableProperty] private bool _isGhostPasteActive;
+    [ObservableProperty] private bool _isSnapShareActive;
+    [ObservableProperty] private int _historyLimit = 50;
 
     public ObservableCollection<ClipboardEntry> History { get; } =
     [
@@ -20,22 +25,56 @@ public partial class ClipboardViewModel : ViewModelBase
         new ClipboardEntry("Meeting at 3 PM — don't forget!", "Gautam-Laptop",  DateTime.Now.AddMinutes(-45)),
     ];
 
+    public ClipboardViewModel()
+    {
+        RefreshFromSettings();
+    }
+
+    /// <summary>
+    /// Reload EchoBoard settings so the clipboard view reflects current config.
+    /// </summary>
+    public void RefreshFromSettings()
+    {
+        var data = _settings.Load();
+        IsMirrorClipActive = data.MirrorClipEnabled;
+        IsGhostPasteActive = data.GhostPasteEnabled;
+        IsSnapShareActive  = data.SnapShareEnabled;
+        HistoryLimit       = data.ClipboardHistoryLimit;
+
+        IsAutoSyncEnabled = IsMirrorClipActive;
+        TrimHistory();
+    }
+
+    private void TrimHistory()
+    {
+        while (History.Count > HistoryLimit)
+            History.RemoveAt(History.Count - 1);
+    }
+
     partial void OnIsAutoSyncEnabledChanged(bool value)
     {
-        StatusText = value ? "Auto-Sync active" : "Auto-Sync paused";
-        _log.Info($"Clipboard auto-sync {(value ? "enabled" : "disabled")}.");
+        StatusText = value ? "MirrorClip active — syncing" : "MirrorClip paused";
+        _log.Info($"Clipboard MirrorClip {(value ? "enabled" : "disabled")}.");
     }
 
     [RelayCommand]
     private async Task PushClipboardAsync()
     {
-        _log.Info("Pushing current clipboard to peers...");
-        StatusText = "Pushing...";
+        if (!IsSnapShareActive)
+        {
+            StatusText = "SnapShare is disabled — enable it in Settings";
+            _log.Warning("Push blocked: SnapShare disabled.");
+            return;
+        }
+
+        _log.Info("EchoShot — Pushing current clipboard to peers...");
+        StatusText = "Broadcasting...";
         await Task.Delay(600);
         var entry = new ClipboardEntry("[local clipboard content]", "This Device", DateTime.Now);
         History.Insert(0, entry);
-        StatusText = "Pushed to all peers.";
-        _log.Info("Clipboard pushed.");
+        TrimHistory();
+        StatusText = "SnapShare — Pushed to all peers.";
+        _log.Info("Clipboard pushed via SnapShare.");
     }
 
     [RelayCommand]

@@ -25,6 +25,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ClipboardViewModel     Clipboard     { get; } = new();
     public RemoteControlViewModel RemoteControl { get; } = new();
     public DebugConsoleViewModel  DebugConsole  { get; } = new();
+    public SettingsViewModel      Settings      { get; } = new();
 
     /// <summary>
     /// Raised when logout completes so the hosting window can switch to LoginWindow.
@@ -34,6 +35,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel()
     {
         _currentPage = Dashboard;
+        Settings.SettingsChanged += () => Clipboard.RefreshFromSettings();
         _ = InitializeSetupAsync();
     }
 
@@ -94,6 +96,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void NavigateClipboard()     => Navigate(Clipboard,     "Clipboard Hub");
     [RelayCommand] private void NavigateRemoteControl() => Navigate(RemoteControl, "Remote Control");
     [RelayCommand] private void NavigateDebugConsole()  => Navigate(DebugConsole,  "Debug Console");
+    [RelayCommand] private void NavigateSettings()       => Navigate(Settings,      "Settings");
 
     [RelayCommand]
     private void ToggleSidebar() => IsSidebarOpen = !IsSidebarOpen;
