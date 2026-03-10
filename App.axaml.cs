@@ -62,10 +62,11 @@ public partial class App : Application
         bool running = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(10));
         string state = await TailscaleService.Instance.GetBackendStateAsync();
         
+        // On Android, "TryBringUpAsync" just waits for the daemon state. 
+        // If it returns true OR the state is already Running, we are good to go.
         _log.Info($"[Startup] Running={running}, State={state}");
 
-        // For Android, we want to be sure it's really "Running"
-        if (state == "Running")
+        if (running || state == "Running")
         {
             _log.Info("[Startup] Authenticated. Opening Dashboard.");
             NavigateToMain(lifetime);

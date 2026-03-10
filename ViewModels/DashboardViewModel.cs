@@ -1,4 +1,6 @@
+using System;
 using System.Collections.ObjectModel;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -16,7 +18,7 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private bool _isRefreshing;
 
-    public ObservableCollection<Device> Devices { get; } = [];
+    public ObservableCollection<Device> Devices { get; } = new();
 
     public DashboardViewModel()
     {
@@ -34,21 +36,28 @@ public partial class DashboardViewModel : ViewModelBase
 
         try
         {
-            // Wait for the daemon to reach Running state by polling the CLI.
-            // This ensures the daemon has fully initialised its network map.
-            bool ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
-                TimeSpan.FromSeconds(15));
+            // Give the daemon a moment to process the login state transition
+            var state = await TailscaleService.Instance.GetBackendStateAsync();
 
-            if (!ready)
+            // If we are starting up, wait a bit
+            if (state == "Starting" || state == "NeedsLogin")
             {
-                _log.Warning("[Dashboard] Daemon not Running after 15 s — showing disconnected.");
+               await Task.Delay(2000); 
+               state = await TailscaleService.Instance.GetBackendStateAsync();
+            }
+
+            if (state != "Running")
+            {
+                if (state != "Starting")
+                    _log.Warning($"[Dashboard] Daemon not Running after status refresh. Current State: {state}");
+
                 TailscaleIp = "—";
                 IsMeshOnline = false;
-                StatusText = "Disconnected";
+                StatusText = state == "Starting" ? "Connecting..." : "Disconnected";
                 return;
             }
 
-            // Fetch status via the CLI.
+            // Fetch status via the CLI or Native Bridge.
             // Retry a few times in case the daemon is still settling.
             string? selfIp = null;
             var devices = new System.Collections.Generic.List<Models.Device>();

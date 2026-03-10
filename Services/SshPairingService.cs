@@ -48,23 +48,70 @@ namespace EchoLink.Services
 
             if (!File.Exists(PrivateKeyPath) || !File.Exists(PublicKeyPath))
             {
-                // Generate a new ed25519 keypair without password via standard ssh-keygen
-                var psi = new ProcessStartInfo
+                if (OperatingSystem.IsAndroid())
                 {
-                    FileName = "ssh-keygen",
-                    Arguments = $"-t ed25519 -f \"{PrivateKeyPath}\" -N \"\" -q",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                    // Generate RSA key natively for Android since ssh-keygen is missing
+                    using var rsa = System.Security.Cryptography.RSA.Create(2048);
+                    
+                    // Write Private Key in PEM format
+                    string privatePem = rsa.ExportRSAPrivateKeyPem();
+                    File.WriteAllText(PrivateKeyPath, privatePem);
 
-                using var process = Process.Start(psi);
-                if (process != null)
+                    // Write Public Key in OpenSSH format
+                    string publicOpenSsh = GenerateOpenSshPublicKey(rsa);
+                    File.WriteAllText(PublicKeyPath, publicOpenSsh);
+                }
+                else
                 {
-                    await process.WaitForExitAsync();
+                    // Generate a new ed25519 keypair without password via standard ssh-keygen
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "ssh-keygen",
+                        Arguments = $"-t ed25519 -f \"{PrivateKeyPath}\" -N \"\" -q",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    using var process = Process.Start(psi);
+                    if (process != null)
+                    {
+                        await process.WaitForExitAsync();
+                    }
+                    
+                    // On Linux/Mac, ensure private key has strict permissions
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        try { Process.Start(new ProcessStartInfo("chmod", $"600 \"{PrivateKeyPath}\"") { CreateNoWindow = true })?.WaitForExit(); } catch { }
+                    }
                 }
             }
+        }
+
+        private static string GenerateOpenSshPublicKey(System.Security.Cryptography.RSA rsa)
+        {
+            var parameters = rsa.ExportParameters(false);
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+            
+            byte[] header = Encoding.ASCII.GetBytes("ssh-rsa");
+            bw.Write(IPAddress.HostToNetworkOrder(header.Length));
+            bw.Write(header);
+            
+            bw.Write(IPAddress.HostToNetworkOrder(parameters.Exponent.Length));
+            bw.Write(parameters.Exponent);
+            
+            byte[] modulus = parameters.Modulus;
+            if (modulus[0] >= 0x80) {
+                bw.Write(IPAddress.HostToNetworkOrder(modulus.Length + 1));
+                bw.Write((byte)0);
+            } else {
+                bw.Write(IPAddress.HostToNetworkOrder(modulus.Length));
+            }
+            bw.Write(modulus);
+            
+            return "ssh-rsa " + Convert.ToBase64String(ms.ToArray()) + " echolink-android";
         }
 
         public async Task<string> GetMyPublicKeyAsync()

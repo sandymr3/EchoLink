@@ -32,18 +32,39 @@ public partial class LoginViewModel : ViewModelBase
 
         try
         {
-            // Reset the stderr-based Running flag so we can detect a fresh
-            // transition after this login attempt.
             TailscaleService.Instance.ResetRunningState();
 
-            // "tailscale up --login-server=..." handles both auth AND bringing
-            // the VPN up.  Unlike "tailscale login", "up" stays connected to
-            // the daemon until it reaches Running state, then exits with code 0.
-            //
-            // If auth is needed, it prints the same auth URL and waits for the
-            // user to complete browser authentication.
-            //
-            // When "up" exits with code 0, the daemon IS in Running state.
+            if (OperatingSystem.IsAndroid())
+            {
+                // Set up a background task to poll the native state and show errors
+                _ = Task.Run(async () =>
+                {
+                    while (!ct.IsCancellationRequested && IsLoading)
+                    {
+                        var state = await TailscaleService.Instance.GetBackendStateAsync(ct);
+                        if (state == "Error")
+                        {
+                            var errorMsg = TailscaleService.Instance.GetAndroidNativeLastError();
+                            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                            {
+                                StatusText = $"Native Bridge Error:\n{errorMsg}";
+                                _log.Error($"[Login] Native error: {errorMsg}");
+                                // Don't cancel immediately so user can read it, but stop loading
+                            });
+                        }
+                        else
+                        {
+                            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                            {
+                                if (StatusText.StartsWith("Starting") || StatusText.StartsWith("State:"))
+                                    StatusText = $"State: {state}... waiting for URL";
+                            });
+                        }
+                        await Task.Delay(1000, ct);
+                    }
+                }, ct);
+            }
+
             await TailscaleService.Instance.LoginAsync(authUrl =>
             {
                 _log.Info($"[Login] Auth URL received: {authUrl}");
@@ -52,10 +73,6 @@ public partial class LoginViewModel : ViewModelBase
                     StatusText = "Browser opened — complete Google sign-in...");
             }, ct);
 
-            // "tailscale up" exited with code 0 → daemon reached Running state.
-            // The daemon may briefly lose Running after the CLI disconnects, but
-            // MainWindow's periodic status checks will re-trigger the profile
-            // switch and bring it back to Running.
             _log.Info("[Login] 'tailscale up' succeeded — transitioning to main window.");
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
         }
@@ -78,15 +95,52 @@ public partial class LoginViewModel : ViewModelBase
     {
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            // Primary attempt: Avalonia native launcher
+            if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop && desktop.MainWindow != null)
             {
-                FileName = url,
-                UseShellExecute = true
-            });
+                var topLevel = Avalonia.Controls.TopLevel.GetTopLevel(desktop.MainWindow);
+                if (topLevel?.Launcher != null)
+                {
+                    _ = topLevel.Launcher.LaunchUriAsync(new Uri(url));
+                    return;
+                }
+            }
+            else if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime single && single.MainView != null)
+            {
+                var topLevel = Avalonia.Controls.TopLevel.GetTopLevel(single.MainView);
+                if (topLevel?.Launcher != null)
+                {
+                    _ = topLevel.Launcher.LaunchUriAsync(new Uri(url));
+                    return;
+                }
+            }
+
+            // Bulletproof fallback for published Windows EXEs
+            if (OperatingSystem.IsWindows())
+            {
+                // cmd.exe /c start replaces UseShellExecute=true for published apps
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd", $"/c start {url.Replace("&", "^&")}") { CreateNoWindow = true });
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                System.Diagnostics.Process.Start("xdg-open", url);
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                System.Diagnostics.Process.Start("open", url);
+            }
+            else
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                });
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            try { System.Diagnostics.Process.Start("xdg-open", url); } catch { /* ignore */ }
+            LoggingService.Instance.Error($"[Login] Failed to open browser: {ex.Message}");
         }
     }
 

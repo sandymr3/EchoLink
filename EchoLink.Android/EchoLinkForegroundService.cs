@@ -25,7 +25,7 @@ public class EchoLinkForegroundService : Service
     public override StartCommandResult OnStartCommand(Intent? intent, [GeneratedEnum] StartCommandFlags flags, int startId)
     {
         string action = intent?.Action ?? "";
-        Console.WriteLine($"[AndroidService] OnStartCommand received. Action: {action}");
+        global::Android.Util.Log.Info("EchoLinkService", $"OnStartCommand action: {action}");
 
         if (action == "START_SERVICE")
         {
@@ -36,18 +36,47 @@ public class EchoLinkForegroundService : Service
             {
                 try
                 {
-                    string configDir = Path.Combine(GetExternalFilesDir(null)!.AbsolutePath, "tailscale");
+                    var filesDir = GetExternalFilesDir(null);
+                    if (filesDir == null) {
+                        global::Android.Util.Log.Error("EchoLinkService", "GetExternalFilesDir(null) is NULL!");
+                        return;
+                    }
+
+                    string configDir = Path.Combine(filesDir.AbsolutePath, "tailscale");
                     if (!Directory.Exists(configDir)) Directory.CreateDirectory(configDir);
 
-                    Console.WriteLine($"[AndroidService] Calling NativeMethods.StartEchoLinkNode with dir: {configDir}");
-                    // For now, using empty authKey for interactive login
-                    int result = NativeMethods.StartEchoLinkNode(configDir, "", Build.Model ?? "Android Device");
-                    Console.WriteLine($"[AndroidService] StartEchoLinkNode result: {result}");
+                    // Quick helper to get the Android device's local Wi-Fi IP
+                    string localIp = "";
+                    try
+                    {
+                        foreach (var netInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                        {
+                            if (netInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211 ||
+                                netInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Ethernet ||
+                                netInterface.Name.Contains("wlan", StringComparison.OrdinalIgnoreCase))
+                            {
+                                foreach (var addrInfo in netInterface.GetIPProperties().UnicastAddresses)
+                                {
+                                    if (addrInfo.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(addrInfo.Address))
+                                    {
+                                        localIp = addrInfo.Address.ToString();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        global::Android.Util.Log.Warn("EchoLinkService", $"Failed to fetch local IP: {ex.Message}");
+                    }
+
+                    global::Android.Util.Log.Info("EchoLinkService", $"Calling StartEchoLinkNode with dir: {configDir}, Local IP: {localIp}");
+                    int result = NativeMethods.StartEchoLinkNode(configDir, "", global::Android.OS.Build.Model ?? "Android", localIp);
+                    global::Android.Util.Log.Info("EchoLinkService", $"StartEchoLinkNode returned: {result}");
                 }
                 catch (Exception ex)
                 {
-                    // Log error to console/log
-                    Console.WriteLine($"[AndroidService] Error starting node: {ex.Message}");
+                    global::Android.Util.Log.Error("EchoLinkService", $"Exception starting node: {ex.Message}");
                 }
             });
         }

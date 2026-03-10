@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace EchoLink.Services
 {
@@ -48,13 +50,16 @@ namespace EchoLink.Services
                 string installerScriptPath = Path.Combine(binDir, "install-sshd.ps1");
 
                 // Requires admin privileges.
-                string script = $@"
-try {{
-    if (Test-Path '{installerScriptPath}') {{
-        & '{installerScriptPath}'
-    }} else {{
+                // Using non-interpolated string to avoid $ issues with PowerShell variables.
+                string script = @"
+try {
+    # Check if a bundled installer script exists
+    $installerPath = $args[0]
+    if (Test-Path $installerPath) {
+        & $installerPath
+    } else {
         Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue
-    }}
+    }
 
     Set-Service -Name sshd -StartupType 'Automatic'
     Start-Service sshd -ErrorAction SilentlyContinue
@@ -63,7 +68,7 @@ try {{
     Start-Sleep -Seconds 2
 
     # Patch sshd_config so Administrators use ~/.ssh/authorized_keys AND set port to 2222
-    $sshd_config = "$env:ProgramData\ssh\sshd_config"
+    $sshd_config = ""$env:ProgramData\ssh\sshd_config""
     if (Test-Path $sshd_config) {
         $content = Get-Content $sshd_config
         $modified = $false
@@ -99,9 +104,9 @@ try {{
     if (!(Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
         New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 2222
     }
-}} catch {{
+} catch {
     exit 1
-}}
+}
 exit 0
 ";
                 string tmpScriptFile = Path.Combine(Path.GetTempPath(), "install_sshd.ps1");
@@ -110,7 +115,7 @@ exit 0
                 var psi = new ProcessStartInfo
                 {
                     FileName = "powershell",
-                    Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -File \"{tmpScriptFile}\"",
+                    Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -File \"{tmpScriptFile}\" \"{installerScriptPath}\"",
                     UseShellExecute = true,
                     WindowStyle = ProcessWindowStyle.Hidden,
                     Verb = "runas" // Elevate

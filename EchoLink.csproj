@@ -27,6 +27,7 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.1.1" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
   </ItemGroup>

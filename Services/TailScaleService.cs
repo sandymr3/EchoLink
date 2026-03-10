@@ -570,6 +570,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
             if (!urlOpened && e.Data.Contains("https://"))
             {
                 int idx = e.Data.IndexOf("https://");
+
                 urlOpened = true;
                 onAuthUrl(e.Data[idx..].Trim());
             }
@@ -581,6 +582,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
              if (!urlOpened && e.Data.Contains("https://"))
             {
                 int idx = e.Data.IndexOf("https://");
+
                 urlOpened = true;
                 onAuthUrl(e.Data[idx..].Trim());
             }
@@ -597,6 +599,11 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
     private string? GetAndroidNativeLoginUrl()
     {
         return NativeBridge?.GetLoginUrl();
+    }
+
+    public string? GetAndroidNativeLastError()
+    {
+        return NativeBridge?.GetLastErrorMsg();
     }
 
     public async Task<bool> TryBringUpAsync(TimeSpan timeout)

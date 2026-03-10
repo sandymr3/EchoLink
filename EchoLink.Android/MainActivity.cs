@@ -19,27 +19,22 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+        global::Android.Util.Log.Info("EchoLink", "MainActivity OnCreate");
 
         // Register the native bridge implementation
         EchoLink.Services.TailscaleService.Instance.NativeBridge = new AndroidNativeMeshBridge();
 
-        // Request notification permission for Android 13+
+        // Start the mesh service immediately (don't wait for permission)
+        StartMeshService();
+
+        // Request notification permission for Android 13+ (for the persistent notification)
         if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu)
         {
             if (CheckSelfPermission(global::Android.Manifest.Permission.PostNotifications) != Permission.Granted)
             {
+                global::Android.Util.Log.Info("EchoLink", "Requesting PostNotifications permission...");
                 RequestPermissions(new string[] { global::Android.Manifest.Permission.PostNotifications }, 1);
             }
-            else
-            {
-                // Permission already granted, start the service
-                StartMeshService();
-            }
-        }
-        else
-        {
-            // Older versions don't need runtime permission for notifications
-            StartMeshService();
         }
     }
 

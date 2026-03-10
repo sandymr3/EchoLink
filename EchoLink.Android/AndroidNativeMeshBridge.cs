@@ -30,11 +30,12 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
     public string? GetTailscaleIp() => _libraryLoaded ? NativeMethods.GetTailscaleIp() : null;
     public string? GetLoginUrl() => _libraryLoaded ? NativeMethods.GetLoginUrl() : null;
     public string GetPeerListJson() => _libraryLoaded ? NativeMethods.GetPeerListJson() : "[]";
+    public string? GetLastErrorMsg() => _libraryLoaded ? NativeMethods.GetLastErrorMsg() : "LibraryLoadError";
     
-    public void StartNode(string configDir, string authKey, string hostname)
+    public void StartNode(string configDir, string authKey, string hostname, string localIp)
     {
         if (_libraryLoaded)
-            NativeMethods.StartEchoLinkNode(configDir, authKey, hostname);
+            NativeMethods.StartEchoLinkNode(configDir, authKey, hostname, localIp);
     }
 
     public void StopNode()

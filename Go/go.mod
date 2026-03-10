@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/pkg/sftp v1.13.10
 	golang.org/x/crypto v0.48.0
-	tailscale.com v1.96.0
+	tailscale.com v1.96.1
 )
 
 require (
