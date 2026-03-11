@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
@@ -17,6 +18,34 @@
             <TextBlock Text="Send commands and control the target device remotely"
                        FontSize="13" Foreground="#B3B3B3"/>
         </StackPanel>
+
+        <!-- Device Selection -->
+        <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">
+            <StackPanel Spacing="12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="Target Device"
+                               FontSize="13" FontWeight="SemiBold"
+                               Foreground="#B3B3B3"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding LoadDevicesCommand}"
+                            Classes="Nav" Background="Transparent" Foreground="#3273F6" Padding="6,2" FontSize="12"/>
+                </Grid>
+                <ComboBox ItemsSource="{Binding OnlineDevices}"
+                          SelectedItem="{Binding SelectedTarget}"
+                          HorizontalAlignment="Stretch"
+                          PlaceholderText="Choose a peer to control…">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate DataType="m:Device">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding IpAddress}" Foreground="#B3B3B3" FontSize="12" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+        </Border>
 
         <!-- Quick Actions (UniformGrid 3-col) -->
         <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">

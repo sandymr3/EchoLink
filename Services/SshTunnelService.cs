@@ -32,7 +32,7 @@ public class SshTunnelService
         string username,
         string privateKeyPath,
         int remoteLocalPort,
-        int sshPort = 2222,
+        int sshPort = 22,
         CancellationToken ct = default)
     {
         return await Task.Run(async () =>

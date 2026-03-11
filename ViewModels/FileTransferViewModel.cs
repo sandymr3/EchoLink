@@ -146,7 +146,12 @@ public partial class FileTransferViewModel : ViewModelBase
             // Open stream from Android URI or Desktop file
             using var fileStream = await file.OpenReadAsync();
 
-            int sshPort = SelectedTarget.Os?.Equals("android", StringComparison.OrdinalIgnoreCase) == true ? 22 : 2222;
+            int sshPort = 22; // Default for Desktop (Windows/Linux)
+            if (SelectedTarget.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true || 
+                SelectedTarget.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                sshPort = 2222; // Switch to Android embedded server
+            }
 
             await _sftp.UploadStreamAsync(
                 SelectedTarget.IpAddress,

@@ -27,14 +27,29 @@ public class MainActivity : AvaloniaMainActivity<App>
         // Start the mesh service immediately (don't wait for permission)
         StartMeshService();
 
-        // Request notification permission for Android 13+ (for the persistent notification)
+        // Request notification and storage permissions for Android
+        var permissions = new System.Collections.Generic.List<string>();
+
         if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu)
         {
             if (CheckSelfPermission(global::Android.Manifest.Permission.PostNotifications) != Permission.Granted)
             {
-                global::Android.Util.Log.Info("EchoLink", "Requesting PostNotifications permission...");
-                RequestPermissions(new string[] { global::Android.Manifest.Permission.PostNotifications }, 1);
+                permissions.Add(global::Android.Manifest.Permission.PostNotifications);
             }
+        }
+
+        // Request storage permission to write to Downloads
+        if (CheckSelfPermission(global::Android.Manifest.Permission.WriteExternalStorage) != Permission.Granted ||
+            CheckSelfPermission(global::Android.Manifest.Permission.ReadExternalStorage) != Permission.Granted)
+        {
+            permissions.Add(global::Android.Manifest.Permission.WriteExternalStorage);
+            permissions.Add(global::Android.Manifest.Permission.ReadExternalStorage);
+        }
+
+        if (permissions.Count > 0)
+        {
+            global::Android.Util.Log.Info("EchoLink", "Requesting permissions...");
+            RequestPermissions(permissions.ToArray(), 1);
         }
     }
 

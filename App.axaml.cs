@@ -35,6 +35,7 @@ public partial class App : Application
             desktop.Exit += async (_, _) =>
             {
                 await ClipboardSyncService.Instance.StopAsync();
+                RemoteControlService.Instance.StopServer();
                 TailscaleService.Instance.StopDaemon();
             };
 
@@ -84,10 +85,12 @@ public partial class App : Application
             var vm = new MainWindowViewModel();
             if (lifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                var oldMain = desktop.MainWindow;
                 var win = new MainWindow { DataContext = vm };
                 desktop.MainWindow = win;
                 desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
                 win.Show();
+                oldMain?.Close();
             }
             else if (lifetime is ISingleViewApplicationLifetime singleView)
             {
@@ -104,10 +107,12 @@ public partial class App : Application
 
             if (lifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                var oldMain = desktop.MainWindow;
                 var win = new LoginWindow { DataContext = vm };
                 desktop.MainWindow = win;
                 desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnLastWindowClose;
                 win.Show();
+                oldMain?.Close();
             }
             else if (lifetime is ISingleViewApplicationLifetime singleView)
             {

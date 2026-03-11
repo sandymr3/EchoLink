@@ -368,6 +368,20 @@ public class ClipboardSyncService
         _log.Info($"MirrorClip received clip from {message.SenderDeviceId}.");
     }
 
+    private Avalonia.Input.Platform.IClipboard? GetAvaloniaClipboard()
+    {
+        var app = Avalonia.Application.Current;
+        if (app?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime dt && dt.MainWindow != null)
+        {
+            return Avalonia.Controls.TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
+        }
+        else if (app?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime single && single.MainView != null)
+        {
+            return Avalonia.Controls.TopLevel.GetTopLevel(single.MainView)?.Clipboard;
+        }
+        return null;
+    }
+
     private async Task ApplyRemoteClipboardAsync(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -380,11 +394,7 @@ public class ClipboardSyncService
         {
             try
             {
-                var app = Avalonia.Application.Current;
-                if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
-                    return;
-
-                var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
+                var clipboard = GetAvaloniaClipboard();
                 if (clipboard is null)
                     return;
 
@@ -432,11 +442,7 @@ public class ClipboardSyncService
         {
             return await Dispatcher.UIThread.InvokeAsync(async () =>
             {
-                var app = Avalonia.Application.Current;
-                if (app?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime dt || dt.MainWindow is null)
-                    return null;
-
-                var clipboard = TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
+                var clipboard = GetAvaloniaClipboard();
                 if (clipboard is null)
                     return null;
 
@@ -465,7 +471,13 @@ public class ClipboardSyncService
 
         var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct);
         var targetDevice = devices?.FirstOrDefault(d => d.IpAddress == targetIp);
-        int sshPort = targetDevice?.Os?.Equals("android", StringComparison.OrdinalIgnoreCase) == true ? 22 : 2222;
+        
+        int sshPort = 22;
+        if (targetDevice?.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true || 
+            targetDevice?.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            sshPort = 2222;
+        }
 
         // 2. We use the Universal SSH Tunnel to pipe to their local-only 44555 listener.
         using var stream = await SshTunnelService.Instance.CreateTunneledStreamAsync(

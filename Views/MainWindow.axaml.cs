@@ -22,10 +22,26 @@ public partial class MainWindow : Window
 
     private void OnLoggedOut()
     {
+        var loginVm = new LoginViewModel();
         var loginWindow = new LoginWindow
         {
-            DataContext = new LoginViewModel()
+            DataContext = loginVm
         };
+
+        loginVm.LoginSucceeded += () =>
+        {
+            var mainWindow = new MainWindow
+            {
+                DataContext = new MainWindowViewModel()
+            };
+            if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                desktop.MainWindow = mainWindow;
+            }
+            mainWindow.Show();
+            loginWindow.Close();
+        };
+
         loginWindow.Show();
         Close();
     }

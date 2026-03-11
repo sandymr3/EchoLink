@@ -27,6 +27,7 @@ import (
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsnet"
 )
+
 // REAL Tailscale flags to bypass Android 11+ SELinux Netlink restrictions.
 func init() {
 	os.Setenv("TS_DISABLE_LINUX_ROUTING", "true")
@@ -210,7 +211,7 @@ func startSftpServer() {
 		// We use a dummy ed25519 key for the ephemeral server, or generate a real one.
 		// For simplicity in a c-shared lib without external keygen tools, we can generate a small RSA key
 		// or just use a statically compiled one for the internal tunnel since Tailscale provides the real security.
-		
+
 		// To keep it simple and robust, let's use a quick RSA generation
 		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err == nil {
@@ -249,6 +250,10 @@ func handleSshConn(nConn net.Conn, config *ssh.ServerConfig) {
 	go ssh.DiscardRequests(reqs)
 
 	for newChannel := range chans {
+		if newChannel.ChannelType() == "direct-tcpip" {
+			go handleDirectTcpIp(newChannel)
+			continue
+		}
 		if newChannel.ChannelType() != "session" {
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
 			continue
@@ -259,8 +264,8 @@ func handleSshConn(nConn net.Conn, config *ssh.ServerConfig) {
 			for req := range in {
 				if req.Type == "subsystem" && string(req.Payload[4:]) == "sftp" {
 					req.Reply(true, nil)
-					// Use a real file-system backed server instead of InMemHandler
-					server, err := sftp.NewServer(channel)
+					// Use a real file-system backed server instead of InMemHandler, and set the starting directory to tailscale's writable dir
+					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(tsServer.Dir))
 					if err == nil {
 						if err := server.Serve(); err != nil && err != io.EOF {
 							log.Print("[Go] SFTP error:", err)
@@ -274,6 +279,46 @@ func handleSshConn(nConn net.Conn, config *ssh.ServerConfig) {
 			}
 		}(requests)
 	}
+}
+
+type directTcpIpPayload struct {
+	DestAddr   string
+	DestPort   uint32
+	OriginAddr string
+	OriginPort uint32
+}
+
+func handleDirectTcpIp(newChannel ssh.NewChannel) {
+	var payload directTcpIpPayload
+	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
+		newChannel.Reject(ssh.ConnectionFailed, "Could not parse payload")
+		return
+	}
+
+	dest := fmt.Sprintf("%s:%d", payload.DestAddr, payload.DestPort)
+	conn, err := net.Dial("tcp", dest)
+	if err != nil {
+		newChannel.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+
+	channel, requests, err := newChannel.Accept()
+	if err != nil {
+		conn.Close()
+		return
+	}
+	go ssh.DiscardRequests(requests)
+
+	go func() {
+		defer channel.Close()
+		defer conn.Close()
+		io.Copy(channel, conn)
+	}()
+	go func() {
+		defer channel.Close()
+		defer conn.Close()
+		io.Copy(conn, channel)
+	}()
 }
 
 type Device struct {

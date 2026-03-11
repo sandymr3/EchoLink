@@ -50,16 +50,18 @@ public class SftpService
                 {
                     // For cross-platform support without path corruption
                     string currentDir = client.WorkingDirectory;
-                    if (currentDir == "/") 
+                    if (sshPort == 2222 || username.StartsWith("u0_"))
+                    {
+                        // Android device - force save to public Downloads folder instead of app sandbox
+                        resolvedRemotePath = $"/storage/emulated/0/Download/{remotePath}";
+                    }
+                    else if (currentDir == "/") 
                     {
                         // Some Windows OpenSSH configs drop us into / mapping to C:\
                         resolvedRemotePath = $"/C:/Users/{username}/Downloads/{remotePath}";
                     }
                     else if (currentDir.StartsWith("/"))
                     {
-                        // Linux or Android Go SFTP server
-                        // On Android, currentDir is usually /data/user/0/com.echolink.app/files/tailscale
-                        // We can just dump it in the working directory because it's guaranteed to be writable
                         resolvedRemotePath = $"{currentDir}/{remotePath}";
                     }
                     else
@@ -140,16 +142,18 @@ public class SftpService
                 {
                     // For cross-platform support without path corruption
                     string currentDir = client.WorkingDirectory;
-                    if (currentDir == "/") 
+                    if (sshPort == 2222 || username.StartsWith("u0_"))
+                    {
+                        // Android device - force save to public Downloads folder instead of app sandbox
+                        resolvedRemotePath = $"/storage/emulated/0/Download/{remotePath}";
+                    }
+                    else if (currentDir == "/") 
                     {
                         // Some Windows OpenSSH configs drop us into / mapping to C:\
                         resolvedRemotePath = $"/C:/Users/{username}/Downloads/{remotePath}";
                     }
                     else if (currentDir.StartsWith("/"))
                     {
-                        // Linux or Android Go SFTP server
-                        // On Android, currentDir is usually /data/user/0/com.echolink.app/files/tailscale
-                        // We can just dump it in the working directory because it's guaranteed to be writable
                         resolvedRemotePath = $"{currentDir}/{remotePath}";
                     }
                     else

@@ -503,14 +503,14 @@ public class TailscaleService
 
         string lastSeen = "";
         if (node.TryGetProperty("LastSeen", out var ls) && DateTime.TryParse(ls.GetString(), out var dt))
+        {
+            // Spoof "Online" status if device was seen in the last 10 minutes (iOS/Android sleep quickly)
+            if (!online && (DateTime.UtcNow - dt).TotalMinutes <= 10)
             {
-                // Spoof "Online" status if device was seen in the last hour
-                if (!online && (DateTime.UtcNow - dt).TotalMinutes <= 60)
-                {
-                    online = true;
-                }
-            lastSeen = dt.ToLocalTime().ToString("g");
+                online = true;
             }
+            lastSeen = dt.ToLocalTime().ToString("g");
+        }
 
         bool isPaired = isSelf || (settingsData.PeerUsernames != null && settingsData.PeerUsernames.ContainsKey(ip));
 
@@ -537,14 +537,25 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
         // Trigger a bring-up in the background to kickstart URL generation
         _ = TryBringUpAsync(TimeSpan.FromSeconds(5));
 
+        bool urlSent = false;
         while (!ct.IsCancellationRequested)
         {
-            var url = GetAndroidNativeLoginUrl();
-            if (!string.IsNullOrEmpty(url))
+            var state = await GetBackendStateAsync(ct);
+            if (state == "Running")
             {
-                _log.Info($"[Tailscale] Android Login: URL captured: {url}");
-                onAuthUrl(url);
-                break;
+                _log.Info("[Tailscale] Android Login: Node is Running. Authentication complete.");
+                return;
+            }
+
+            if (!urlSent)
+            {
+                var url = GetAndroidNativeLoginUrl();
+                if (!string.IsNullOrEmpty(url))
+                {
+                    _log.Info($"[Tailscale] Android Login: URL captured: {url}");
+                    onAuthUrl(url);
+                    urlSent = true;
+                }
             }
             await Task.Delay(1000, ct);
         }
@@ -554,7 +565,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
 
         string cliPath = CliPath();
         string unattended = OperatingSystem.IsWindows() ? " --unattended" : "";
-        string args = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}");
+        string args = PrefixSocketArg($"up --login-server={HeadscaleServer} --force-reauth{unattended}");
 
         if (!File.Exists(cliPath)) throw new Exception($"tailscale CLI not found at {cliPath}");
 
@@ -668,11 +679,11 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
 
     public async Task ExposeLocalPortsAsync(CancellationToken ct = default)
     {
-        _log.Info("[Tailscale] Setting up port forwarding (SSH=2222, Pairing=44444)...");
+        _log.Info("[Tailscale] Setting up port forwarding (SSH=22, Pairing=44444)...");
 
-        // We strictly expose port 2222 (for all SSH payloads) and Port 44444 (for unauthenticated Key-Pairing).
+        // We strictly expose port 22 (for all SSH payloads) and Port 44444 (for unauthenticated Key-Pairing).
         // Clipboard and all future stream services now ride inside the encrypted SSH stream natively!
-        foreach (var (port, label) in new (int, string)[] { (2222, "SSH"), (44444, "Pairing") })
+        foreach (var (port, label) in new (int, string)[] { (22, "SSH"), (44444, "Pairing") })
         {
             var (stdout, stderr) = await RunCliAsync($"serve --bg --tcp={port} tcp://127.0.0.1:{port}", ct);
             if (!string.IsNullOrWhiteSpace(stdout))
@@ -689,15 +700,6 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
         else
             _log.Warning("[Tailscale] 'tailscale serve status' returned no output — ports may NOT be exposed to peers. " +
                          "Check that 'tailscale serve' is supported on this platform/version.");
-        if (OperatingSystem.IsAndroid())
-        {
-            _log.Info("[Tailscale] Android: Native mesh node handles port exposure internally.");
-            return;
-        }
-
-        _log.Info("[Tailscale] Setting up userspace port forwarding for SSH (2222) and Pairing (44444)...");
-        await RunCliAsync("serve --bg --tcp 2222 tcp://127.0.0.1:2222", ct);
-        await RunCliAsync("serve --bg --tcp 44444 tcp://127.0.0.1:44444", ct);
     }
 
     public async Task LogoutAsync(CancellationToken ct = default)

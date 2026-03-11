@@ -67,7 +67,7 @@ try {
     # Give sshd time to generate keys and default config if first run
     Start-Sleep -Seconds 2
 
-    # Patch sshd_config so Administrators use ~/.ssh/authorized_keys AND set port to 2222
+    # Patch sshd_config so Administrators use ~/.ssh/authorized_keys
     $sshd_config = ""$env:ProgramData\ssh\sshd_config""
     if (Test-Path $sshd_config) {
         $content = Get-Content $sshd_config
@@ -80,18 +80,9 @@ try {
             } elseif ($line -match '^\s*AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys') {
                 '#       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys'
                 $modified = $true
-            } elseif ($line -match '^#?Port 22\s*$') {
-                'Port 2222'
-                $modified = $true
             } else {
                 $line
             }
-        }
-        
-        # Ensure Port 2222 is present if not already added by the loop
-        if ($newContent -notmatch '^Port 2222') {
-             $newContent = @('Port 2222') + $newContent
-             $modified = $true
         }
 
         if ($modified) {
@@ -102,7 +93,7 @@ try {
 
     # Open Firewall
     if (!(Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-        New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 2222
+        New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
     }
 } catch {
     exit 1
