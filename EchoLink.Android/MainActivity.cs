@@ -23,6 +23,7 @@ public class MainActivity : AvaloniaMainActivity<App>
 
         // Register the native bridge implementation
         EchoLink.Services.TailscaleService.Instance.NativeBridge = new AndroidNativeMeshBridge();
+        EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new AndroidAudioRuntimeBridge();
 
         // Start the mesh service immediately (don't wait for permission)
         StartMeshService();
@@ -44,6 +45,11 @@ public class MainActivity : AvaloniaMainActivity<App>
         {
             permissions.Add(global::Android.Manifest.Permission.WriteExternalStorage);
             permissions.Add(global::Android.Manifest.Permission.ReadExternalStorage);
+        }
+
+        if (CheckSelfPermission(global::Android.Manifest.Permission.RecordAudio) != Permission.Granted)
+        {
+            permissions.Add(global::Android.Manifest.Permission.RecordAudio);
         }
 
         if (permissions.Count > 0)

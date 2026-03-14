@@ -118,6 +118,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private async System.Threading.Tasks.Task LogoutAsync()
     {
         await _clipboardSync.StopAsync();
+        await AudioStreamingService.Instance.StopAllAsync();
         RemoteControlService.Instance.StopServer();
         await TailscaleService.Instance.LogoutAsync();
         LoggedOut?.Invoke();

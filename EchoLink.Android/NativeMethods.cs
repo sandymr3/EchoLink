@@ -33,6 +33,9 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.LPStr)]
     public static extern string GetLastErrorMsg();
 
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    public static extern void SetAudioTargetHost(string host);
+
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void LogoutNode();
 }
