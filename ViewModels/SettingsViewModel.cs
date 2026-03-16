@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -158,6 +159,44 @@ public partial class SettingsViewModel : ViewModelBase
 
         StatusText = "Defaults restored — click Save to apply";
         _log.Info("Settings reset to defaults.");
+    }
+
+    [RelayCommand]
+    private void OpenVbCableUrl()
+    {
+        try
+        {
+            var url = "https://vb-audio.com/Cable/";
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+            _log.Info("Opening VB-Audio Cable download page...");
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to open URL: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private void InstallVirtualMic()
+    {
+        var service = new VirtualMicService();
+        bool success = service.InstallDriver();
+        if (success)
+        {
+            StatusText = "Virtual Mic installed successfully";
+            _log.Info("Virtual Mic installed successfully.");
+        }
+        else
+        {
+            StatusText = "Failed to install Virtual Mic";
+            _log.Error("Failed to install Virtual Mic.");
+        }
+        ShowSaved = true;
+        _ = HideSavedBadgeAsync();
     }
 
     [RelayCommand]

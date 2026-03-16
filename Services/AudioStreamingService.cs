@@ -31,7 +31,7 @@ public class AudioStreamingService
     private WaveInEvent? _desktopMicCapture;
 
     // ── Desktop playback ─────────────────────────────────────────────────────
-    private WaveOutEvent? _desktopPlaybackOutput;
+    private IWavePlayer? _desktopPlaybackOutput;
     private BufferedWaveProvider? _desktopPlaybackBuffer;
 
     // ── Opus codec ───────────────────────────────────────────────────────────
@@ -447,7 +447,27 @@ public class AudioStreamingService
             BufferDuration = TimeSpan.FromMilliseconds(50)
         };
 
-        _desktopPlaybackOutput = new WaveOutEvent() { DesiredLatency = 50 };
+        if (OperatingSystem.IsWindows())
+        {
+            var virtualMicService = new VirtualMicService();
+            var virtualDevice = virtualMicService.GetVirtualSpeakerDevice();
+            
+            if (virtualDevice != null)
+            {
+                _log.Info($"[Audio] Routing playback to virtual driver: {virtualDevice.FriendlyName}");
+                _desktopPlaybackOutput = new WasapiOut(virtualDevice, NAudio.CoreAudioApi.AudioClientShareMode.Shared, true, 50);
+            }
+            else
+            {
+                _log.Warning("[Audio] Virtual audio driver not found. Falling back to default speakers.");
+                _desktopPlaybackOutput = new WaveOutEvent() { DesiredLatency = 50 };
+            }
+        }
+        else
+        {
+            _desktopPlaybackOutput = new WaveOutEvent() { DesiredLatency = 50 };
+        }
+
         _desktopPlaybackOutput.Init(_desktopPlaybackBuffer);
         _desktopPlaybackOutput.Play();
     }

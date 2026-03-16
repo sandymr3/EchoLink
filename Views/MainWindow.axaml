@@ -98,6 +98,17 @@
                             <TextBlock Text="Debug Console" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+
+                    <Border Height="1" Background="#2D2D2D" Margin="0,8"/>
+
+                    <Button Classes="Nav"
+                            Command="{Binding NavigateSettingsCommand}"
+                            HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="⚙️" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="Settings" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
                 <!-- Bottom: SSH Status + Logout + Version -->
