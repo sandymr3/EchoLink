@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Services;
 
@@ -78,6 +78,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
         await _clipboardSync.StartAsync();
         RemoteControlService.Instance.StartServer();
+        AudioStreamingService.Instance.StartServer();
     }
 
     private async System.Threading.Tasks.Task<bool> PromptUserForPairingAsync(string hostname)
@@ -119,6 +120,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         await _clipboardSync.StopAsync();
         await AudioStreamingService.Instance.StopAllAsync();
+        AudioStreamingService.Instance.StopServer();
         RemoteControlService.Instance.StopServer();
         await TailscaleService.Instance.LogoutAsync();
         LoggedOut?.Invoke();

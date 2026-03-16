@@ -88,17 +88,32 @@ public partial class RemoteControlViewModel : ViewModelBase
         {
             await AudioStreamingService.Instance.StopAllAsync();
 
-            int receivePort = OperatingSystem.IsAndroid() ? 4001 : 4002;
-            bool receiveOk = await AudioStreamingService.Instance.StartReceiveAsync(receivePort);
+            string pkeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
+            bool sendOk;
 
-            bool sendOk = OperatingSystem.IsAndroid()
-                ? await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget.IpAddress)
-                : await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget.IpAddress);
+            if (OperatingSystem.IsAndroid())
+            {
+                // Android: use UDP receive (Go mesh bridge) + mic send
+                int receivePort = 4001;
+                bool receiveOk = await AudioStreamingService.Instance.StartUdpReceiveAsync(receivePort);
+                sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget, pkeyPath);
 
-            IsAudioStreaming = receiveOk && sendOk;
-            AudioStatus = IsAudioStreaming
-                ? (OperatingSystem.IsAndroid() ? "Mic + playback active" : "System audio + playback active")
-                : "Audio start failed";
+                IsAudioStreaming = receiveOk && sendOk;
+                AudioStatus = IsAudioStreaming
+                    ? "Mic + playback active"
+                    : "Audio start failed";
+            }
+            else
+            {
+                // Desktop: audio receive is handled by TCP server (already running).
+                // Just start sending system audio via SSH tunnel.
+                sendOk = await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget, pkeyPath);
+
+                IsAudioStreaming = sendOk;
+                AudioStatus = sendOk
+                    ? "System audio streaming active"
+                    : "Audio start failed";
+            }
         }
         catch (Exception ex)
         {
