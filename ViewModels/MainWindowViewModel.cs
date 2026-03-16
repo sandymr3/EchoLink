@@ -21,12 +21,14 @@ public partial class MainWindowViewModel : ViewModelBase
     private System.Threading.Tasks.TaskCompletionSource<bool>? _pairingTcs;
     private readonly ClipboardSyncService _clipboardSync = ClipboardSyncService.Instance;
 
-    public DashboardViewModel     Dashboard     { get; } = new();
-    public FileTransferViewModel  FileTransfer  { get; } = new();
-    public ClipboardViewModel     Clipboard     { get; } = new();
-    public RemoteControlViewModel RemoteControl { get; } = new();
-    public DebugConsoleViewModel  DebugConsole  { get; } = new();
-    public SettingsViewModel      Settings      { get; } = new();
+    public DashboardViewModel     Dashboard      { get; } = new();
+    public FileTransferViewModel  FileTransfer   { get; } = new();
+    public ClipboardViewModel     Clipboard      { get; } = new();
+    public RemoteControlViewModel RemoteControl  { get; } = new();
+    public DebugConsoleViewModel  DebugConsole   { get; } = new();
+    public SettingsViewModel      Settings       { get; } = new();
+    public SystemMonitorViewModel SystemMonitor  { get; } = new();
+    public MacrosViewModel        Macros         { get; } = new();
 
     /// <summary>
     /// Raised when logout completes so the hosting window can switch to LoginWindow.
@@ -105,12 +107,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void RejectPairing() => _pairingTcs?.TrySetResult(false);
 
-    [RelayCommand] private void NavigateDashboard()     => Navigate(Dashboard,     "Dashboard");
-    [RelayCommand] private void NavigateFileTransfer()  => Navigate(FileTransfer,  "File Transfer");
-    [RelayCommand] private void NavigateClipboard()     => Navigate(Clipboard,     "Clipboard Hub");
-    [RelayCommand] private void NavigateRemoteControl() => Navigate(RemoteControl, "Remote Control");
-    [RelayCommand] private void NavigateDebugConsole()  => Navigate(DebugConsole,  "Debug Console");
+    [RelayCommand] private void NavigateDashboard()      => Navigate(Dashboard,     "Dashboard");
+    [RelayCommand] private void NavigateFileTransfer()   => Navigate(FileTransfer,  "File Transfer");
+    [RelayCommand] private void NavigateClipboard()      => Navigate(Clipboard,     "Clipboard Hub");
+    [RelayCommand] private void NavigateRemoteControl()  => Navigate(RemoteControl, "Remote Control");
+    [RelayCommand] private void NavigateDebugConsole()   => Navigate(DebugConsole,  "Debug Console");
     [RelayCommand] private void NavigateSettings()       => Navigate(Settings,      "Settings");
+    [RelayCommand] private void NavigateSystemMonitor()  => Navigate(SystemMonitor, "System Monitor");
+    [RelayCommand] private void NavigateMacros()         => Navigate(Macros,        "Macro Buttons");
 
     [RelayCommand]
     private void ToggleSidebar() => IsSidebarOpen = !IsSidebarOpen;

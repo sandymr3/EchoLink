@@ -15,48 +15,7 @@
                     <TextBlock Text="Mesh Network" FontSize="11" Foreground="#B3B3B3" Margin="20,0,0,0"/>
                 </StackPanel>
                 
-                <StackPanel DockPanel.Dock="Top" Margin="12,0" Spacing="4">
-                    <Button Classes="Nav" Command="{Binding NavigateDashboardCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="⬡" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="Dashboard" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button Classes="Nav" Command="{Binding NavigateFileTransferCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="📁" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="File Transfer" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button Classes="Nav" Command="{Binding NavigateClipboardCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="Clipboard Hub" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button Classes="Nav" Command="{Binding NavigateRemoteControlCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="🖱" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="Remote Control" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button Classes="Nav" Command="{Binding NavigateDebugConsoleCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="🐛" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="Debug Console" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-
-                    <Border Height="1" Background="#2D2D2D" Margin="0,8"/>
-
-                    <Button Classes="Nav" Command="{Binding NavigateSettingsCommand}" HorizontalAlignment="Stretch">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="⚙️" FontSize="16" VerticalAlignment="Center"/>
-                            <TextBlock Text="Settings" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-                
+                <!-- Bottom section must be declared BEFORE the fill item in DockPanel -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="12,0,12,12" Spacing="8">
                     <Button Classes="Nav" Command="{Binding LogoutCommand}" HorizontalAlignment="Stretch">
                         <StackPanel Orientation="Horizontal" Spacing="12">
@@ -66,6 +25,63 @@
                     </Button>
                     <TextBlock Text="v1.0 · FOSS Hack 2026" FontSize="10" Foreground="#4A4A4A" Margin="8,0,0,8"/>
                 </StackPanel>
+
+                <!-- Fill item: scrollable nav (must be last in DockPanel) -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="12,0" Spacing="4">
+                        <Button Classes="Nav" Command="{Binding NavigateDashboardCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="⬡" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Dashboard" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateFileTransferCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="📁" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="File Transfer" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateClipboardCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Clipboard Hub" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateRemoteControlCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="🖱" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Remote Control" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateDebugConsoleCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="🐛" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Debug Console" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateSystemMonitorCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="📊" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="System Monitor" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Classes="Nav" Command="{Binding NavigateMacrosCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="⚡" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Macro Buttons" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+
+                        <Border Height="1" Background="#2D2D2D" Margin="0,8"/>
+
+                        <Button Classes="Nav" Command="{Binding NavigateSettingsCommand}" HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="⚙️" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock Text="Settings" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </ScrollViewer>
             </DockPanel>
         </Border>
         

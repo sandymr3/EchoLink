@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EchoLink.Models;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 
@@ -185,6 +188,60 @@ public class SftpService
             {
                 if (client.IsConnected)
                     client.Disconnect();
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Lists the contents of a remote directory via SFTP.
+    /// </summary>
+    public async Task<List<RemoteFileEntry>> ListDirectoryAsync(
+        string host,
+        string username,
+        string privateKeyPath,
+        string remotePath,
+        int sshPort = 22,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(() =>
+        {
+            var privateKeyFile = new PrivateKeyFile(privateKeyPath);
+            var connectionInfo = new ConnectionInfo(
+                host, sshPort, username,
+                ProxyTypes.Socks5, "127.0.0.1", Socks5Port, "", "",
+                new PrivateKeyAuthenticationMethod(username, privateKeyFile));
+
+            using var client = new SftpClient(connectionInfo);
+            try
+            {
+                _log.Info($"[SFTP] Listing {remotePath} on {host}");
+                client.Connect();
+
+                var entries = new List<RemoteFileEntry>();
+                foreach (var f in client.ListDirectory(remotePath))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (f.Name is "." or "..") continue;
+                    entries.Add(new RemoteFileEntry
+                    {
+                        Name         = f.Name,
+                        FullPath     = f.FullName,
+                        Size         = f.Attributes.Size,
+                        IsDirectory  = f.IsDirectory,
+                        LastModified = f.Attributes.LastWriteTime
+                    });
+                }
+
+                return entries.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Name).ToList();
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"[SFTP] ListDirectory failed: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
             }
         }, ct);
     }

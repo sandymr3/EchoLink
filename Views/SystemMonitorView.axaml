@@ -1,0 +1,143 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="620"
+             x:Class="EchoLink.Views.SystemMonitorView"
+             x:DataType="vm:SystemMonitorViewModel"
+             Background="Transparent">
+
+    <DockPanel Margin="32,24">
+
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,24">
+            <TextBlock Text="System Monitor" FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
+            <TextBlock Text="Live CPU and RAM telemetry over SSH · polls every 10 seconds"
+                       FontSize="13" Foreground="#B3B3B3"/>
+        </StackPanel>
+
+        <!-- Device + Connect card -->
+        <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">
+            <StackPanel Spacing="12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="Target Device" FontSize="13" Foreground="#B3B3B3"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding LoadDevicesCommand}"
+                            Classes="Nav" Background="Transparent" Foreground="#3273F6"
+                            Padding="6,2" FontSize="12"/>
+                </Grid>
+                <ComboBox ItemsSource="{Binding OnlineDevices}"
+                          SelectedItem="{Binding SelectedDevice}"
+                          HorizontalAlignment="Stretch"
+                          PlaceholderText="Choose a device to monitor…">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate DataType="m:Device">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding Os}" Foreground="#707070"
+                                           FontSize="11" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                    <Button Grid.Column="0" Classes="Primary"
+                            Content="⚡ Connect"
+                            Command="{Binding ConnectCommand}"
+                            IsEnabled="{Binding !IsConnected}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"/>
+                    <Button Grid.Column="1"
+                            Content="✖ Disconnect"
+                            Command="{Binding DisconnectCommand}"
+                            IsEnabled="{Binding IsConnected}"
+                            Background="#2A1A1A" Foreground="#FF5252"
+                            BorderBrush="#3A2020" BorderThickness="1"
+                            CornerRadius="8" Padding="16,10"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar -->
+        <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,20"
+                Background="#171717" CornerRadius="6">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                             Fill="#00E676"
+                             IsVisible="{Binding IsConnected}"/>
+                    <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                             Fill="#3A3A3A"
+                             IsVisible="{Binding IsConnected, Converter={x:Static BoolConverters.Not}}"/>
+                    <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="#B3B3B3"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding LastUpdated}"
+                           FontSize="11" Foreground="#505050" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Metric cards: CPU + RAM -->
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*" ColumnSpacing="16" Margin="0,0,0,20">
+
+            <!-- CPU card -->
+            <Border Grid.Column="0" Classes="Card">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="{Binding CpuLabel}"
+                               FontSize="11" FontWeight="SemiBold"
+                               Foreground="#505050" TextTrimming="CharacterEllipsis"/>
+
+                    <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
+                        <Run Text="{Binding CpuUsage, StringFormat='{}{0:F1}'}"
+                             FontSize="52" FontWeight="Bold" Foreground="#00E5FF"/>
+                        <Run Text="%" FontSize="24" Foreground="#3A3A3A"/>
+                    </TextBlock>
+
+                    <ProgressBar Value="{Binding CpuUsage}" Minimum="0" Maximum="100"
+                                 Height="8" CornerRadius="4" Foreground="#00E5FF"/>
+
+                    <TextBlock Text="of CPU capacity" FontSize="11" Foreground="#404040"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- RAM card -->
+            <Border Grid.Column="1" Classes="Card">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="{Binding RamLabel}"
+                               FontSize="11" FontWeight="SemiBold"
+                               Foreground="#505050" TextTrimming="CharacterEllipsis"/>
+
+                    <TextBlock HorizontalAlignment="Center" TextAlignment="Center">
+                        <Run Text="{Binding RamUsage, StringFormat='{}{0:F1}'}"
+                             FontSize="52" FontWeight="Bold" Foreground="#00E676"/>
+                        <Run Text="%" FontSize="24" Foreground="#3A3A3A"/>
+                    </TextBlock>
+
+                    <ProgressBar Value="{Binding RamUsage}" Minimum="0" Maximum="100"
+                                 Height="8" CornerRadius="4" Foreground="#00E676"/>
+
+                    <TextBlock Text="of RAM capacity" FontSize="11" Foreground="#404040"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Connecting spinner -->
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding IsConnecting}"
+                HorizontalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock Text="Connecting…" FontSize="13" Foreground="#707070"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+    </DockPanel>
+</UserControl>

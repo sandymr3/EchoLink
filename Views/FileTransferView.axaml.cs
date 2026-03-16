@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using EchoLink.Models;
 using EchoLink.ViewModels;
 
 namespace EchoLink.Views;
@@ -13,34 +14,47 @@ public partial class FileTransferView : UserControl
     {
         InitializeComponent();
 
-        // Wire up drag-drop events
         var dropZone = this.FindControl<Border>("DropZoneBorder");
         if (dropZone is not null)
         {
-            dropZone.AddHandler(DragDrop.DropEvent,       OnDrop);
-            dropZone.AddHandler(DragDrop.DragOverEvent,   OnDragOver);
-            dropZone.AddHandler(DragDrop.DragEnterEvent,  OnDragEnter);
-            dropZone.AddHandler(DragDrop.DragLeaveEvent,  OnDragLeave);
+            dropZone.AddHandler(DragDrop.DropEvent,      OnDrop);
+            dropZone.AddHandler(DragDrop.DragOverEvent,  OnDragOver);
+            dropZone.AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+            dropZone.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         }
     }
 
     private async void OnBrowseClicked(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not FileTransferViewModel vm) return;
-
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel is null) return;
 
         var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title           = "Select file to transfer",
-            AllowMultiple   = false
+            Title = "Select file to transfer",
+            AllowMultiple = false
         });
 
         if (files.Count > 0)
-        {
-            // Pass the IStorageFile directly to handle Android's content:// URIs
             vm.SetFile(files[0]);
+    }
+
+    private void OnNavigateDirClicked(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: RemoteFileEntry entry } &&
+            DataContext is FileTransferViewModel vm)
+        {
+            _ = vm.NavigateDirCommand.ExecuteAsync(entry);
+        }
+    }
+
+    private void OnDownloadClicked(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: RemoteFileEntry entry } &&
+            DataContext is FileTransferViewModel vm)
+        {
+            vm.InitiateDownloadCommand.Execute(entry);
         }
     }
 
@@ -79,3 +93,4 @@ public partial class FileTransferView : UserControl
         }
     }
 }
+

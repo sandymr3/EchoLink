@@ -11,21 +11,45 @@ public partial class FileTransferViewModel : ViewModelBase
     private readonly LoggingService _log = LoggingService.Instance;
     private readonly SftpService _sftp = new();
 
+    // ── Upload state ────────────────────────────────────────────────────
     [ObservableProperty] private Device? _selectedTarget;
     [ObservableProperty] private string _selectedFileName = string.Empty;
     [ObservableProperty] private double _uploadProgress;
     [ObservableProperty] private bool _isUploading;
     [ObservableProperty] private string _statusText = "Drop a file or click to browse";
     [ObservableProperty] private bool _isDropZoneActive;
+    [ObservableProperty] private bool _hasFileSelected;
+    [ObservableProperty] private Avalonia.Platform.Storage.IStorageFile? _selectedStorageFile;
+
+    // ── Browse / download state ─────────────────────────────────────────
+    [ObservableProperty] private bool _isBrowsing;
+    [ObservableProperty] private bool _isLoadingDirectory;
+    [ObservableProperty] private string _currentRemotePath = "/";
+    [ObservableProperty] private RemoteFileEntry? _pendingDownload;
+    [ObservableProperty] private bool _isDownloading;
+    [ObservableProperty] private double _downloadProgress;
+    [ObservableProperty] private string _downloadStatusText = string.Empty;
 
     private CancellationTokenSource? _uploadCts;
+    private CancellationTokenSource? _downloadCts;
 
     public ObservableCollection<Device> OnlineDevices { get; } = new();
+    public ObservableCollection<RemoteFileEntry> RemoteFiles { get; } = new();
 
     public FileTransferViewModel()
     {
         _ = LoadDevicesAsync();
     }
+
+    partial void OnSelectedTargetChanged(Device? value)
+    {
+        // Reset browse state when device changes
+        IsBrowsing = false;
+        RemoteFiles.Clear();
+        CurrentRemotePath = "/";
+    }
+
+    // ── Device loading ───────────────────────────────────────────────────
 
     [RelayCommand]
     private async Task LoadDevicesAsync()
@@ -34,138 +58,224 @@ public partial class FileTransferViewModel : ViewModelBase
         {
             var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
             OnlineDevices.Clear();
-            foreach (var device in devices)
-            {
-                if (device.IsOnline && !device.IsSelf)
-                {
-                    OnlineDevices.Add(device);
-                }
-            }
+            foreach (var d in devices)
+                if (d.IsOnline && !d.IsSelf)
+                    OnlineDevices.Add(d);
         }
         catch (Exception ex)
         {
-            _log.Error($"[FileTransfer] Failed to load devices: {ex.Message}");
+            _log.Error($"[FileTransfer] Load devices failed: {ex.Message}");
+        }
+    }
+
+    // ── Remote file browser ──────────────────────────────────────────────
+
+    [RelayCommand]
+    private async Task BrowseRemoteAsync()
+    {
+        if (SelectedTarget is null) return;
+        IsBrowsing = true;
+        await LoadDirectoryAsync(CurrentRemotePath);
+    }
+
+    [RelayCommand]
+    private async Task NavigateDirAsync(RemoteFileEntry entry)
+    {
+        if (!entry.IsDirectory) return;
+        await LoadDirectoryAsync(entry.FullPath);
+    }
+
+    [RelayCommand]
+    private async Task GoUpDirectoryAsync()
+    {
+        var trimmed = CurrentRemotePath.TrimEnd('/');
+        var idx = trimmed.LastIndexOf('/');
+        var parent = idx > 0 ? trimmed[..idx] : "/";
+        await LoadDirectoryAsync(parent);
+    }
+
+    private async Task LoadDirectoryAsync(string path)
+    {
+        if (SelectedTarget is null) return;
+
+        IsLoadingDirectory = true;
+        RemoteFiles.Clear();
+        StatusText = $"Listing {path}…";
+
+        try
+        {
+            var pairingService = new SshPairingService(TailscaleService.Instance);
+            await pairingService.EnsureKeyPairAsync();
+            string username = GetTargetUsername(SelectedTarget);
+            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
+
+            var entries = await _sftp.ListDirectoryAsync(
+                SelectedTarget.IpAddress, username, pairingService.PrivateKeyPath,
+                path, sshPort);
+
+            CurrentRemotePath = path;
+            RemoteFiles.Clear();
+            foreach (var e in entries)
+                RemoteFiles.Add(e);
+
+            StatusText = $"{entries.Count} items in {path}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"❌ {ex.Message}";
+            _log.Error($"[SFTP] ListDirectory failed: {ex.Message}");
+        }
+        finally
+        {
+            IsLoadingDirectory = false;
+        }
+    }
+
+    // ── Download flow ────────────────────────────────────────────────────
+
+    [RelayCommand]
+    private void InitiateDownload(RemoteFileEntry entry)
+    {
+        if (entry.IsDirectory) return;
+        PendingDownload = entry;
+    }
+
+    [RelayCommand]
+    private void CancelPendingDownload()
+    {
+        PendingDownload = null;
+    }
+
+    [RelayCommand]
+    private async Task ConfirmDownloadAsync()
+    {
+        if (PendingDownload is null || SelectedTarget is null) return;
+
+        var entry = PendingDownload;
+        PendingDownload = null;
+
+        var downloadsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        Directory.CreateDirectory(downloadsDir);
+        string localPath = Path.Combine(downloadsDir, entry.Name);
+
+        IsDownloading = true;
+        DownloadProgress = 0;
+        DownloadStatusText = $"Connecting to {SelectedTarget.Name}…";
+        _downloadCts = new CancellationTokenSource();
+        var ct = _downloadCts.Token;
+
+        try
+        {
+            var pairingService = new SshPairingService(TailscaleService.Instance);
+            await pairingService.EnsureKeyPairAsync();
+            string username = GetTargetUsername(SelectedTarget);
+            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
+
+            await _sftp.DownloadFileAsync(
+                SelectedTarget.IpAddress, username, pairingService.PrivateKeyPath,
+                entry.FullPath, localPath,
+                (downloaded, total) =>
+                {
+                    DownloadProgress = total > 0 ? (double)downloaded / total * 100.0 : 0;
+                    DownloadStatusText = $"Downloading {entry.Name}… {DownloadProgress:F1}%";
+                },
+                sshPort, ct);
+
+            DownloadStatusText = $"✔ Saved to {localPath}";
+            _log.Info($"[SFTP] Downloaded {entry.Name} → {localPath}");
+        }
+        catch (OperationCanceledException)
+        {
+            DownloadStatusText = "❌ Download cancelled.";
+        }
+        catch (Exception ex)
+        {
+            DownloadStatusText = $"❌ {ex.Message}";
+            _log.Error($"[SFTP] Download failed: {ex.Message}");
+        }
+        finally
+        {
+            IsDownloading = false;
+            _downloadCts?.Dispose();
+            _downloadCts = null;
         }
     }
 
     [RelayCommand]
-    private async Task BrowseFileAsync()
+    private void CancelDownload()
     {
-        _log.Info("Opening file picker...");
-        // File dialog will be opened from the code-behind; VM handles the rest via SetFile().
-        await Task.CompletedTask;
+        _downloadCts?.Cancel();
     }
 
-    [ObservableProperty] private Avalonia.Platform.Storage.IStorageFile? _selectedStorageFile;
-    [ObservableProperty] private bool _hasFileSelected;
+    // ── Upload flow (existing) ───────────────────────────────────────────
 
     public void SetFile(Avalonia.Platform.Storage.IStorageFile file)
     {
         SelectedStorageFile = file;
         SelectedFileName = file.Name;
         HasFileSelected = true;
-        _log.Info($"File selected: {SelectedFileName}");
         StatusText = "File ready to send. Click Send.";
+        _log.Info($"File selected: {file.Name}");
     }
 
-    // Keep the old string-based one for drag-and-drop compatibility on desktop
     public void SetFile(string filePath)
     {
-        // This is a dummy wrapper for Desktop drag-and-drop.
-        // For a full implementation, we'd wrap the string in a custom IStorageFile.
-        SelectedFileName = System.IO.Path.GetFileName(filePath);
+        SelectedFileName = Path.GetFileName(filePath);
         HasFileSelected = true;
-        _log.Info($"File selected: {SelectedFileName}");
         StatusText = "File ready to send. Click Send.";
+        _log.Info($"File selected (path): {SelectedFileName}");
     }
 
     [RelayCommand]
     public async Task SendFileAsync()
     {
-        if (SelectedTarget is null)
-        {
-            StatusText = "Please select a target device first.";
-            return;
-        }
-
-        if (SelectedStorageFile is null)
-        {
-            StatusText = "Please select a file first.";
-            return;
-        }
-
+        if (SelectedTarget is null) { StatusText = "Please select a target device first."; return; }
+        if (SelectedStorageFile is null) { StatusText = "Please select a file first."; return; }
         await PerformSftpUploadAsync(SelectedStorageFile);
     }
 
     private async Task PerformSftpUploadAsync(Avalonia.Platform.Storage.IStorageFile file)
     {
-        if (SelectedTarget == null) return;
+        if (SelectedTarget is null) return;
 
         IsUploading = true;
         UploadProgress = 0;
         var fileName = file.Name;
-        
+
         _uploadCts = new CancellationTokenSource();
         var ct = _uploadCts.Token;
-
-        _log.Info($"[SFTP] Preparing upload of '{fileName}' → {SelectedTarget.IpAddress}");
-        StatusText = $"Connecting to {SelectedTarget.Name}...";
+        StatusText = $"Connecting to {SelectedTarget.Name}…";
 
         try
         {
-            // With Tailscale SSH, the host accepts the connection regardless of the password 
-            // as long as the Headscale ACL allows it!
-            string username = Environment.UserName;
-            
             var pairingService = new SshPairingService(TailscaleService.Instance);
             await pairingService.EnsureKeyPairAsync();
-            string privateKeyPath = pairingService.PrivateKeyPath;
-            
-            // Try to pair silently (or prompt the other side)
-            _log.Info($"[SFTP] Requesting pairing with {SelectedTarget.IpAddress}...");
-            var pairingResult = await pairingService.RequestPairingAsync(SelectedTarget.IpAddress, Environment.MachineName, Environment.UserName);
-            
-            string targetUsername = pairingResult.TargetUsername ?? "root"; // fallback
 
+            var pairingResult = await pairingService.RequestPairingAsync(
+                SelectedTarget.IpAddress, Environment.MachineName, Environment.UserName);
+
+            string targetUsername = pairingResult.TargetUsername ?? "root";
             if (pairingResult.Accepted && !string.IsNullOrWhiteSpace(pairingResult.TargetUsername))
             {
-                // Save it for background services like ClipboardSync that need to SSH silently
-                var settingsData = SettingsService.Instance.Load();
-                settingsData.PeerUsernames[SelectedTarget.IpAddress] = pairingResult.TargetUsername;
-                SettingsService.Instance.Save(settingsData);
+                var settings = SettingsService.Instance.Load();
+                settings.PeerUsernames[SelectedTarget.IpAddress] = pairingResult.TargetUsername;
+                SettingsService.Instance.Save(settings);
             }
 
             if (!pairingResult.Accepted)
-            {
-                _log.Warning("[SFTP] Pairing rejected or timed out. SFTP connection may fail if not already authorized.");
-            }
+                _log.Warning("[SFTP] Pairing rejected or timed out.");
 
-            // Just pass the filename, let the SftpService resolve the remote OS folder dynamically
-            string remotePath = fileName; 
+            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
 
-            // Open stream from Android URI or Desktop file
             using var fileStream = await file.OpenReadAsync();
-
-            int sshPort = 22; // Default for Desktop (Windows/Linux)
-            if (SelectedTarget.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true || 
-                SelectedTarget.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                sshPort = 2222; // Switch to Android embedded server
-            }
-
             await _sftp.UploadStreamAsync(
-                SelectedTarget.IpAddress,
-                targetUsername,
-                privateKeyPath,
-                fileStream,
-                fileName,
-                remotePath,
+                SelectedTarget.IpAddress, targetUsername, pairingService.PrivateKeyPath,
+                fileStream, fileName, fileName,
                 (uploaded, total) =>
                 {
-                    double progress = (total == 0) ? 0 : ((double)uploaded / total * 100);
-                    // Marshaling property changes to UI thread implicitly handled by Avalonia/ObservableProperty but good practice
-                    UploadProgress = progress;
-                    StatusText = $"Uploading {fileName}... {progress:F1}%";
+                    UploadProgress = total == 0 ? 0 : (double)uploaded / total * 100;
+                    StatusText = $"Uploading {fileName}… {UploadProgress:F1}%";
                 }, sshPort, ct);
 
             StatusText = $"✔ '{fileName}' sent to {SelectedTarget.Name}";
@@ -174,7 +284,6 @@ public partial class FileTransferViewModel : ViewModelBase
         catch (OperationCanceledException)
         {
             StatusText = "❌ Upload cancelled.";
-            _log.Warning($"[SFTP] Upload cancelled: {fileName}");
         }
         catch (Exception ex)
         {
@@ -189,40 +298,29 @@ public partial class FileTransferViewModel : ViewModelBase
         }
     }
 
-    private async Task SimulateUploadAsync(string filePath)
-    {
-        IsUploading    = true;
-        UploadProgress = 0;
-        var fileName   = System.IO.Path.GetFileName(filePath);
-
-        _log.Info($"Starting upload of '{fileName}' → {SelectedTarget?.Name}");
-
-        for (int i = 1; i <= 100; i++)
-        {
-            UploadProgress = i;
-            StatusText     = $"Uploading {fileName}… {i}%";
-            await Task.Delay(30);
-        }
-
-        StatusText   = $"✔ '{fileName}' sent to {SelectedTarget!.Name}";
-        IsUploading  = false;
-        _log.Info($"Upload complete: {fileName}");
-    }
-
     [RelayCommand]
     private void CancelUpload()
     {
         if (IsUploading && _uploadCts != null)
-        {
-            _log.Info("Cancelling upload...");
             _uploadCts.Cancel();
-        }
         else
         {
-            IsUploading  = false;
-            StatusText   = "Upload cancelled.";
-            UploadProgress = 0;
-            _log.Warning("Upload cancelled by user.");
+            IsUploading = false;
+            StatusText = "Upload cancelled.";
         }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static bool IsAndroid(Device d) =>
+        d.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true ||
+        d.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string GetTargetUsername(Device d)
+    {
+        var settings = SettingsService.Instance.Load();
+        return settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u)
+            ? u
+            : Environment.UserName;
     }
 }
