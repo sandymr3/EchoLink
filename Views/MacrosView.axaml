@@ -1,0 +1,213 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EchoLink.ViewModels"
+             xmlns:m="using:EchoLink.Models"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             x:Class="EchoLink.Views.MacrosView"
+             x:DataType="vm:MacrosViewModel"
+             Background="Transparent">
+
+    <ScrollViewer Padding="32,24">
+        <StackPanel Spacing="20">
+
+            <!-- Header -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Macro Buttons" FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
+                <TextBlock Text="One-tap commands fired via SSH · sync across the mesh instantly"
+                           FontSize="13" Foreground="#B3B3B3"/>
+            </StackPanel>
+
+            <!-- Action bar -->
+            <Border Classes="Card">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="12">
+
+                    <!-- Run on label -->
+                    <TextBlock Grid.Column="0" Text="Run on:"
+                               FontSize="13" Foreground="#B3B3B3"
+                               VerticalAlignment="Center"/>
+
+                    <!-- Target device selector -->
+                    <ComboBox Grid.Column="1"
+                              ItemsSource="{Binding OnlineDevices}"
+                              SelectedItem="{Binding ExecuteTarget}"
+                              HorizontalAlignment="Stretch"
+                              PlaceholderText="Select target…">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate DataType="m:Device">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding DeviceIcon}" FontSize="14"/>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="(this device)"
+                                               IsVisible="{Binding IsSelf}"
+                                               Foreground="#505050" FontSize="11"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <!-- Refresh devices -->
+                    <Button Grid.Column="2" Content="↻" Command="{Binding LoadDevicesCommand}"
+                            Classes="Nav" Padding="8,4" FontSize="14"
+                            ToolTip.Tip="Refresh device list"/>
+
+                    <!-- Sync to mesh -->
+                    <Button Grid.Column="3"
+                            Content="⇄ Sync Mesh"
+                            Command="{Binding SyncToMeshCommand}"
+                            IsEnabled="{Binding IsSyncing, Converter={x:Static BoolConverters.Not}}"
+                            Background="#0F1E0F" Foreground="#00E676"
+                            BorderBrush="#1A3A1A" BorderThickness="1"
+                            CornerRadius="6" Padding="12,6" FontSize="12"/>
+
+                    <!-- Add new -->
+                    <Button Grid.Column="4" Content="＋ Add Macro"
+                            Command="{Binding AddMacroCommand}"
+                            Classes="Primary" Padding="12,6" FontSize="12"/>
+                </Grid>
+            </Border>
+
+            <!-- Inline editor -->
+            <Border Classes="Card"
+                    IsVisible="{Binding IsEditing}"
+                    BorderBrush="#1A2A00" BorderThickness="1"
+                    Background="#0F1A00">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="New Macro" FontSize="14" FontWeight="SemiBold"
+                               Foreground="#B3B3B3"/>
+
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto"
+                          ColumnSpacing="12" RowSpacing="10">
+
+                        <!-- Name -->
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Name"
+                                   FontSize="12" Foreground="#707070" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="0" Grid.Column="1"
+                                 Text="{Binding EditName}"
+                                 Background="#1A1A1A" Foreground="#EFEFEF"
+                                 BorderBrush="#2D2D2D" CornerRadius="6"
+                                 Padding="8,6"/>
+
+                        <!-- Icon -->
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Icon"
+                                   FontSize="12" Foreground="#707070" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="1" Grid.Column="1"
+                                 Text="{Binding EditIcon}"
+                                 Watermark="Emoji e.g. ⚡ 🔒 🔄"
+                                 Background="#1A1A1A" Foreground="#EFEFEF"
+                                 BorderBrush="#2D2D2D" CornerRadius="6"
+                                 Padding="8,6"/>
+
+                        <!-- Command -->
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Command"
+                                   FontSize="12" Foreground="#707070" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="2" Grid.Column="1"
+                                 Text="{Binding EditCommand}"
+                                 Watermark="e.g. rundll32.exe powrprof.dll,SetSuspendState"
+                                 FontFamily="Consolas, monospace"
+                                 Background="#1A1A1A" Foreground="#EFEFEF"
+                                 BorderBrush="#2D2D2D" CornerRadius="6"
+                                 Padding="8,6"/>
+
+                        <!-- OS filter -->
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Target OS"
+                                   FontSize="12" Foreground="#707070" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                            <ComboBox ItemsSource="{Binding OsOptions}"
+                                      SelectedItem="{Binding EditTargetOs}"
+                                      MinWidth="120"/>
+                            <CheckBox IsChecked="{Binding EditSyncToMesh}"
+                                      Foreground="#B3B3B3" FontSize="12">
+                                Sync to mesh on save
+                            </CheckBox>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                        <Button Content="Cancel" Command="{Binding CancelEditCommand}"
+                                Background="#2D2D2D" Foreground="#B3B3B3"
+                                CornerRadius="6" Padding="14,8"/>
+                        <Button Content="✔ Save Macro" Command="{Binding SaveMacroCommand}"
+                                Classes="Primary"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Macro tiles grid -->
+            <ItemsControl ItemsSource="{Binding Macros}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="m:MacroButton">
+                        <Border Width="180" Margin="0,0,12,12"
+                                Background="#161616"
+                                BorderBrush="#252525" BorderThickness="1"
+                                CornerRadius="10" Padding="16">
+                            <StackPanel Spacing="10">
+                                <!-- Top row: icon + delete -->
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Icon}"
+                                               FontSize="32" VerticalAlignment="Center"/>
+                                    <Button Grid.Column="1"
+                                            Content="✕"
+                                            Tag="{Binding}"
+                                            Click="OnDeleteMacroClicked"
+                                            Background="Transparent"
+                                            Foreground="#404040"
+                                            Padding="4" FontSize="12"
+                                            VerticalAlignment="Top"/>
+                                </Grid>
+
+                                <!-- Name -->
+                                <TextBlock Text="{Binding Name}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="#EFEFEF"
+                                           TextTrimming="CharacterEllipsis"/>
+
+                                <!-- OS badge -->
+                                <Border Background="#252525" CornerRadius="4"
+                                        Padding="6,2" HorizontalAlignment="Left"
+                                        IsVisible="{Binding TargetOs, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                    <TextBlock Text="{Binding TargetOs}"
+                                               FontSize="10" Foreground="#707070"/>
+                                </Border>
+
+                                <!-- Execute button -->
+                                <Button Content="▶ Run"
+                                        Tag="{Binding}"
+                                        Click="OnRunMacroClicked"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        Background="#1A2A1A" Foreground="#00E676"
+                                        BorderBrush="#253525" BorderThickness="1"
+                                        CornerRadius="6" Padding="0,7"
+                                        FontSize="12" FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Empty state -->
+            <Border IsVisible="{Binding HasNoMacros}"
+                    HorizontalAlignment="Center" Padding="0,24">
+                <StackPanel Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="⚡" FontSize="48" HorizontalAlignment="Center" Foreground="#2D2D2D"/>
+                    <TextBlock Text="No macros yet. Click '+ Add Macro' to create one."
+                               FontSize="13" Foreground="#404040" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Status footer -->
+            <TextBlock Text="{Binding StatusText}"
+                       FontSize="12" Foreground="#505050"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

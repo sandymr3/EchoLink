@@ -4,31 +4,38 @@
              xmlns:m="using:EchoLink.Models"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="720"
              x:Class="EchoLink.Views.FileTransferView"
              x:DataType="vm:FileTransferViewModel"
              Background="Transparent">
 
     <ScrollViewer Padding="32,24">
-        <StackPanel Spacing="24">
+        <StackPanel Spacing="20">
 
             <!-- Header -->
             <StackPanel Spacing="6">
                 <TextBlock Text="File Transfer"
                            FontSize="28" FontWeight="Bold" Foreground="#FFFFFF"/>
-                <TextBlock Text="Send files securely over the Tailscale mesh"
+                <TextBlock Text="Send files or browse the remote device's file system"
                            FontSize="13" Foreground="#B3B3B3"/>
             </StackPanel>
 
             <!-- Target selector -->
             <Border Classes="Card">
                 <StackPanel Spacing="12">
-                      <Grid ColumnDefinitions="*,Auto">
-                          <TextBlock Grid.Column="0" Text="Select Target Device"
-                                     FontSize="13" Foreground="#B3B3B3" VerticalAlignment="Center"/>
-                          <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding LoadDevicesCommand}" 
-                                  Classes="Nav" Background="Transparent" Foreground="#3273F6" Padding="6,2" FontSize="12"/>
-                      </Grid>
+                    <Grid ColumnDefinitions="*,Auto,Auto">
+                        <TextBlock Grid.Column="0" Text="Target Device"
+                                   FontSize="13" Foreground="#B3B3B3" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding LoadDevicesCommand}"
+                                Classes="Nav" Background="Transparent" Foreground="#3273F6"
+                                Padding="6,2" FontSize="12" Margin="0,0,8,0"/>
+                        <Button Grid.Column="2" Content="📂 Browse Remote"
+                                Command="{Binding BrowseRemoteCommand}"
+                                IsEnabled="{Binding SelectedTarget, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                Background="#1A1A1A" Foreground="#00E5FF"
+                                BorderBrush="#2D2D2D" BorderThickness="1"
+                                CornerRadius="6" Padding="10,4" FontSize="12"/>
+                    </Grid>
                     <ComboBox ItemsSource="{Binding OnlineDevices}"
                               SelectedItem="{Binding SelectedTarget}"
                               HorizontalAlignment="Stretch"
@@ -49,22 +56,157 @@
                 </StackPanel>
             </Border>
 
-            <!-- Drop Zone -->
+            <!-- ── Remote File Browser ─────────────────────────────────── -->
+            <Border Classes="Card"
+                    IsVisible="{Binding IsBrowsing}"
+                    Padding="0">
+                <StackPanel>
+                    <!-- Browser toolbar -->
+                    <Border Background="#202020" CornerRadius="8,8,0,0" Padding="12,8">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Button Grid.Column="0"
+                                    Content="⬆ Up"
+                                    Command="{Binding GoUpDirectoryCommand}"
+                                    IsEnabled="{Binding CurrentRemotePath, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                    Background="Transparent" Foreground="#B3B3B3"
+                                    Padding="8,4" FontSize="12" CornerRadius="4"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding CurrentRemotePath}"
+                                       FontFamily="Consolas, monospace"
+                                       FontSize="13" Foreground="#9A9A9A"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="2"
+                                       Text="Loading…"
+                                       FontSize="12" Foreground="#707070"
+                                       VerticalAlignment="Center"
+                                       IsVisible="{Binding IsLoadingDirectory}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- File list -->
+                    <Border Background="#161616" CornerRadius="0,0,8,8" MinHeight="280" MaxHeight="380">
+                        <ScrollViewer>
+                            <ItemsControl ItemsSource="{Binding RemoteFiles}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="m:RemoteFileEntry">
+                                        <Border Background="Transparent"
+                                                BorderBrush="#1C1C1C"
+                                                BorderThickness="0,0,0,1"
+                                                Padding="12,8">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                                                <!-- Icon -->
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding Icon}"
+                                                           FontSize="16" Margin="0,0,10,0"
+                                                           VerticalAlignment="Center"/>
+                                                <!-- Name -->
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding Name}"
+                                                           Foreground="#EFEFEF"
+                                                           FontSize="13"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <!-- Size -->
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding SizeDisplay}"
+                                                           Foreground="#707070"
+                                                           FontSize="11"
+                                                           FontFamily="Consolas, monospace"
+                                                           VerticalAlignment="Center"
+                                                           Margin="12,0"/>
+                                                <!-- Date -->
+                                                <TextBlock Grid.Column="3"
+                                                           Text="{Binding LastModifiedDisplay}"
+                                                           Foreground="#505050"
+                                                           FontSize="11"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,12,0"/>
+                                                <!-- Action buttons -->
+                                                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6">
+                                                    <Button Content="→ Open"
+                                                            IsVisible="{Binding IsDirectory}"
+                                                            Tag="{Binding}"
+                                                            Click="OnNavigateDirClicked"
+                                                            Background="#1E1E1E" Foreground="#00E5FF"
+                                                            BorderBrush="#2D2D2D" BorderThickness="1"
+                                                            CornerRadius="4" Padding="8,3" FontSize="11"/>
+                                                    <Button Content="⬇ Download"
+                                                            IsVisible="{Binding !IsDirectory}"
+                                                            Tag="{Binding}"
+                                                            Click="OnDownloadClicked"
+                                                            Background="#1A1A1A" Foreground="#B0B0B0"
+                                                            BorderBrush="#2D2D2D" BorderThickness="1"
+                                                            CornerRadius="4" Padding="8,3" FontSize="11"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- ── Download confirmation dialog ───────────────────────── -->
+            <Border Classes="Card"
+                    IsVisible="{Binding PendingDownload, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    BorderBrush="#3A3A00" BorderThickness="1" Background="#1C1B00">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Text="⬇" FontSize="20" Foreground="#FFD600" VerticalAlignment="Center"/>
+                        <TextBlock Text="Confirm Download" FontSize="14" FontWeight="SemiBold"
+                                   Foreground="#FFD600" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Spacing="4">
+                        <TextBlock FontSize="13" Foreground="#EFEFEF" TextWrapping="Wrap">
+                            <Run Text="Download "/>
+                            <Run Text="{Binding PendingDownload.Name}" FontWeight="SemiBold" Foreground="#00E5FF"/>
+                            <Run Text=" ("/>
+                            <Run Text="{Binding PendingDownload.SizeDisplay}"/>
+                            <Run Text=") to your Downloads folder?"/>
+                        </TextBlock>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                        <Button Content="Cancel"
+                                Command="{Binding CancelPendingDownloadCommand}"
+                                Background="#2D2D2D" Foreground="#B3B3B3"
+                                CornerRadius="6" Padding="14,8"/>
+                        <Button Content="⬇ Download"
+                                Command="{Binding ConfirmDownloadCommand}"
+                                Classes="Primary"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- ── Download progress ───────────────────────────────────── -->
+            <Border Classes="Card" IsVisible="{Binding IsDownloading}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="{Binding DownloadStatusText}"
+                               FontSize="13" Foreground="#B3B3B3"/>
+                    <ProgressBar Value="{Binding DownloadProgress}" Minimum="0" Maximum="100"/>
+                    <Button Classes="Danger" Content="Cancel"
+                            Command="{Binding CancelDownloadCommand}"
+                            HorizontalAlignment="Right"/>
+                </StackPanel>
+            </Border>
+
+            <!-- ── Upload drop zone (hidden while browsing) ────────────── -->
             <Border Name="DropZoneBorder"
                     Background="#1A1A1A"
                     BorderBrush="#2D2D2D"
                     BorderThickness="2"
                     CornerRadius="12"
-                    MinHeight="220"
+                    MinHeight="200"
+                    IsVisible="{Binding !IsBrowsing}"
                     DragDrop.AllowDrop="True">
                 <StackPanel HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             Spacing="12"
                             Margin="32">
-                    <TextBlock Text="⬆"
-                               FontSize="48"
-                               HorizontalAlignment="Center"
-                               Foreground="#2D2D2D"/>
+                    <TextBlock Text="⬆" FontSize="48"
+                               HorizontalAlignment="Center" Foreground="#2D2D2D"/>
                     <TextBlock Text="Drop files here or click to browse"
                                FontSize="15" Foreground="#B3B3B3"
                                HorizontalAlignment="Center"/>
@@ -72,36 +214,29 @@
                                FontSize="13" Foreground="#00E5FF"
                                HorizontalAlignment="Center"
                                IsVisible="{Binding SelectedFileName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                    <Button Classes="Primary"
-                            Content="Browse Files"
+                    <Button Classes="Primary" Content="Browse Files"
                             HorizontalAlignment="Center"
                             Click="OnBrowseClicked"/>
-                    
-                    <Button Classes="Primary"
-                            Content="Send"
+                    <Button Classes="Primary" Content="Send"
                             HorizontalAlignment="Center"
                             Command="{Binding SendFileCommand}"
                             IsVisible="{Binding HasFileSelected}"
-                            Margin="0,15,0,0"/>
+                            Margin="0,10,0,0"/>
                 </StackPanel>
             </Border>
 
-            <!-- Upload progress (only visible during upload) -->
-            <Border Classes="Card"
-                    IsVisible="{Binding IsUploading}">
+            <!-- ── Upload progress ─────────────────────────────────────── -->
+            <Border Classes="Card" IsVisible="{Binding IsUploading}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="{Binding StatusText}"
-                               FontSize="13" Foreground="#B3B3B3"/>
-                    <ProgressBar Value="{Binding UploadProgress}"
-                                 Minimum="0" Maximum="100"/>
-                    <Button Classes="Danger"
-                            Content="Cancel"
+                    <TextBlock Text="{Binding StatusText}" FontSize="13" Foreground="#B3B3B3"/>
+                    <ProgressBar Value="{Binding UploadProgress}" Minimum="0" Maximum="100"/>
+                    <Button Classes="Danger" Content="Cancel"
                             Command="{Binding CancelUploadCommand}"
                             HorizontalAlignment="Right"/>
                 </StackPanel>
             </Border>
 
-            <!-- Status (not uploading) -->
+            <!-- ── Status (idle) ───────────────────────────────────────── -->
             <TextBlock Text="{Binding StatusText}"
                        FontSize="13" Foreground="#B3B3B3"
                        IsVisible="{Binding IsUploading, Converter={x:Static BoolConverters.Not}}"/>
