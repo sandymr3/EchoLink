@@ -31,6 +31,12 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
     public string? GetLoginUrl() => _libraryLoaded ? NativeMethods.GetLoginUrl() : null;
     public string GetPeerListJson() => _libraryLoaded ? NativeMethods.GetPeerListJson() : "[]";
     public string? GetLastErrorMsg() => _libraryLoaded ? NativeMethods.GetLastErrorMsg() : "LibraryLoadError";
+
+    public void SetAudioTargetHost(string host)
+    {
+        if (_libraryLoaded)
+            NativeMethods.SetAudioTargetHost(host);
+    }
     
     public void StartNode(string configDir, string authKey, string hostname, string localIp)
     {

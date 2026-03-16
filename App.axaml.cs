@@ -35,6 +35,8 @@ public partial class App : Application
             desktop.Exit += async (_, _) =>
             {
                 await ClipboardSyncService.Instance.StopAsync();
+                await AudioStreamingService.Instance.StopAllAsync();
+                AudioStreamingService.Instance.StopServer();
                 RemoteControlService.Instance.StopServer();
                 TailscaleService.Instance.StopDaemon();
             };

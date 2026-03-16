@@ -38,10 +38,13 @@ func init() {
 var (
 	tsServer      *tsnet.Server
 	sshLn         net.Listener
+	audioMeshLn   net.PacketConn
+	audioLocalLn  net.PacketConn
 	mu            sync.Mutex
 	internalState string = "NotStarted"
 	lastAuthUrl   string = ""
 	lastErrorMsg  string = ""
+	audioTarget   string = ""
 )
 
 //export StartEchoLinkNode
@@ -115,6 +118,7 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 			go startSftpServer()
 			go startPairingForwarder()
 			go startSocks5Proxy()
+			go startUdpAudioProxy()
 
 			internalState = "Running"
 		} else {
@@ -130,6 +134,14 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 //export GetLastErrorMsg
 func GetLastErrorMsg() *C.char {
 	return C.CString(lastErrorMsg)
+}
+
+//export SetAudioTargetHost
+func SetAudioTargetHost(host *C.char) {
+	mu.Lock()
+	defer mu.Unlock()
+	audioTarget = strings.TrimSpace(C.GoString(host))
+	log.Printf("[Go] Audio target set to: %s", audioTarget)
 }
 
 func startSocks5Proxy() {
@@ -182,6 +194,83 @@ func startPairingForwarder() {
 			io.Copy(localConn, c)
 		}(meshConn)
 	}
+}
+
+func startUdpAudioProxy() {
+	meshLn, err := tsServer.ListenPacket("udp", ":4000")
+	if err != nil {
+		log.Printf("[Go] Failed to listen on mesh UDP :4000 for audio: %v", err)
+		return
+	}
+
+	localLn, err := net.ListenPacket("udp", "127.0.0.1:4002")
+	if err != nil {
+		log.Printf("[Go] Failed to listen on local UDP 127.0.0.1:4002 for audio uplink: %v", err)
+		meshLn.Close()
+		return
+	}
+
+	audioMeshLn = meshLn
+	audioLocalLn = localLn
+
+	log.Printf("[Go] UDP audio proxy active: mesh :4000 <-> local 127.0.0.1:4001/4002")
+
+	go func() {
+		localPlaybackAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 4001}
+		localPlaybackConn, err := net.DialUDP("udp", nil, localPlaybackAddr)
+		if err != nil {
+			log.Printf("[Go] Failed to dial local playback UDP 127.0.0.1:4001: %v", err)
+			return
+		}
+		defer localPlaybackConn.Close()
+
+		buf := make([]byte, 4096)
+		for {
+			n, _, err := meshLn.ReadFrom(buf)
+			if err != nil {
+				log.Printf("[Go] mesh audio read stopped: %v", err)
+				return
+			}
+
+			if n > 0 {
+				_, wErr := localPlaybackConn.Write(buf[:n])
+				if wErr != nil {
+					log.Printf("[Go] local playback write error: %v", wErr)
+				}
+			}
+		}
+	}()
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, _, err := localLn.ReadFrom(buf)
+			if err != nil {
+				log.Printf("[Go] local audio read stopped: %v", err)
+				return
+			}
+
+			mu.Lock()
+			target := audioTarget
+			mu.Unlock()
+
+			if target == "" {
+				continue
+			}
+
+			remoteConn, dialErr := tsServer.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", target, 4002))
+			if dialErr != nil {
+				log.Printf("[Go] audio uplink dial error to %s:4002: %v", target, dialErr)
+				continue
+			}
+
+			_, writeErr := remoteConn.Write(buf[:n])
+			if writeErr != nil {
+				log.Printf("[Go] audio uplink write error: %v", writeErr)
+			}
+			remoteConn.Close()
+		}
+	}()
 }
 
 func startSftpServer() {
@@ -437,9 +526,18 @@ func StopEchoLinkNode() {
 	mu.Lock()
 	defer mu.Unlock()
 	internalState = "NotStarted"
+	audioTarget = ""
 	if sshLn != nil {
 		sshLn.Close()
 		sshLn = nil
+	}
+	if audioMeshLn != nil {
+		audioMeshLn.Close()
+		audioMeshLn = nil
+	}
+	if audioLocalLn != nil {
+		audioLocalLn.Close()
+		audioLocalLn = nil
 	}
 	if tsServer != nil {
 		tsServer.Close()

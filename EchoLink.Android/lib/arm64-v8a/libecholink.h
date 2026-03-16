@@ -90,6 +90,7 @@ extern "C" {
 
 extern GoInt StartEchoLinkNode(char* configDir, char* authKey, char* hostname, char* localIp);
 extern char* GetLastErrorMsg(void);
+extern void SetAudioTargetHost(char* host);
 extern char* GetPeerListJson(void);
 extern char* GetBackendState(void);
 extern char* GetTailscaleIp(void);

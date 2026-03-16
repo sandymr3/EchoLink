@@ -93,6 +93,32 @@
             </StackPanel>
         </Border>
 
+        <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">
+            <StackPanel Spacing="12">
+                <TextBlock Text="Live Audio"
+                           FontSize="13" FontWeight="SemiBold"
+                           Foreground="#B3B3B3"/>
+
+                <TextBlock Text="{Binding AudioStatus}"
+                           FontSize="12"
+                           Foreground="#00E5FF"/>
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                    <Button Grid.Column="0"
+                            Classes="Primary"
+                            Command="{Binding StartAudioCommand}"
+                            Content="Start Audio"
+                            IsEnabled="{Binding !IsAudioStreaming}"/>
+
+                    <Button Grid.Column="1"
+                            Classes="Danger"
+                            Command="{Binding StopAudioCommand}"
+                            Content="Stop Audio"
+                            IsEnabled="{Binding IsAudioStreaming}"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
         <!-- Trackpad area -->
         <StackPanel DockPanel.Dock="Top" Spacing="8">
             <StackPanel Orientation="Horizontal" Spacing="8">

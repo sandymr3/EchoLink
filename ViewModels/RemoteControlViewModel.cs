@@ -1,6 +1,4 @@
 using System.Collections.ObjectModel;
-using System.IO;
-using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -19,6 +17,8 @@ public partial class RemoteControlViewModel : ViewModelBase
     [ObservableProperty] private double _pointerX;
     [ObservableProperty] private double _pointerY;
     [ObservableProperty] private string _trackpadStatus = "Trackpad ready";
+    [ObservableProperty] private string _audioStatus = "Audio idle";
+    [ObservableProperty] private bool _isAudioStreaming;
 
     private double _lastX;
     private double _lastY;
@@ -57,6 +57,10 @@ public partial class RemoteControlViewModel : ViewModelBase
 
     private async Task ConnectToTargetAsync(Device? target)
     {
+        await AudioStreamingService.Instance.StopAllAsync();
+        IsAudioStreaming = false;
+        AudioStatus = "Audio idle";
+
         if (target == null)
         {
             RemoteControlService.Instance.Disconnect();
@@ -69,6 +73,62 @@ public partial class RemoteControlViewModel : ViewModelBase
         bool success = await RemoteControlService.Instance.ConnectToTargetAsync(target, pkeyPath, CancellationToken.None);
         
         TrackpadStatus = success ? "Connected" : "Failed to connect";
+    }
+
+    [RelayCommand]
+    private async Task StartAudioAsync()
+    {
+        if (SelectedTarget == null)
+        {
+            AudioStatus = "Select a target device first";
+            return;
+        }
+
+        try
+        {
+            await AudioStreamingService.Instance.StopAllAsync();
+
+            string pkeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
+            bool sendOk;
+
+            if (OperatingSystem.IsAndroid())
+            {
+                // Android: use UDP receive (Go mesh bridge) + mic send
+                int receivePort = 4001;
+                bool receiveOk = await AudioStreamingService.Instance.StartUdpReceiveAsync(receivePort);
+                sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget, pkeyPath);
+
+                IsAudioStreaming = receiveOk && sendOk;
+                AudioStatus = IsAudioStreaming
+                    ? "Mic + playback active"
+                    : "Audio start failed";
+            }
+            else
+            {
+                // Desktop: audio receive is handled by TCP server (already running).
+                // Just start sending system audio via SSH tunnel.
+                sendOk = await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget, pkeyPath);
+
+                IsAudioStreaming = sendOk;
+                AudioStatus = sendOk
+                    ? "System audio streaming active"
+                    : "Audio start failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            IsAudioStreaming = false;
+            AudioStatus = $"Audio error: {ex.Message}";
+            _log.Error($"[RemoteControl] Audio start failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task StopAudioAsync()
+    {
+        await AudioStreamingService.Instance.StopAllAsync();
+        IsAudioStreaming = false;
+        AudioStatus = "Audio stopped";
     }
 
     // ── Quick Actions ─────────────────────────────────────────────────────────
