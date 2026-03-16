@@ -51,7 +51,7 @@ public sealed class LoggingService
         WriteToFile(entry.FormattedMessage);
 
         // Update the observable collection on the UI thread for in-app display.
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => Entries.Add(entry));
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => Entries.Insert(0, entry));
     }
 
     public void Info(string message)    => Log(message, LogLevel.Info);

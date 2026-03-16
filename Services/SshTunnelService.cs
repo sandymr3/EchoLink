@@ -65,7 +65,7 @@ public class SshTunnelService
             _log.Debug($"[SshTunnel] Tunnelling local {boundLocalPort} --> {host}:22 --> 127.0.0.1:{remoteLocalPort}");
 
             // 3. Connect our localized Stream to the Tunnel Head
-            var tcpClient = new TcpClient();
+            var tcpClient = new TcpClient() { NoDelay = true };
             await tcpClient.ConnectAsync("127.0.0.1", (int)boundLocalPort, ct);
             var innerStream = tcpClient.GetStream();
 

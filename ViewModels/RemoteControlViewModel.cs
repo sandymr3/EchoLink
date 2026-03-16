@@ -93,13 +93,11 @@ public partial class RemoteControlViewModel : ViewModelBase
 
             if (OperatingSystem.IsAndroid())
             {
-                // Android: use UDP receive (Go mesh bridge) + mic send
-                int receivePort = 4001;
-                bool receiveOk = await AudioStreamingService.Instance.StartUdpReceiveAsync(receivePort);
+                // Send Android mic via low-latency SSH tunnel (bypasses Windows PC UDP limits)
                 sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget, pkeyPath);
 
-                IsAudioStreaming = receiveOk && sendOk;
-                AudioStatus = IsAudioStreaming
+                IsAudioStreaming = sendOk;
+                AudioStatus = sendOk
                     ? "Mic + playback active"
                     : "Audio start failed";
             }

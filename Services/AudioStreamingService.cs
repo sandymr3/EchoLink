@@ -116,6 +116,7 @@ public class AudioStreamingService
 
     private async Task HandleIncomingAudioAsync(TcpClient client, CancellationToken ct)
     {
+        client.NoDelay = true; // Disable Nagle's algorithm to prevent latency build-up
         using (client)
         {
             var stream = client.GetStream();
@@ -171,81 +172,6 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // ANDROID-ONLY: UDP receive path (for Go mesh bridge)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    private UdpClient? _udpReceiver;
-    private CancellationTokenSource? _udpReceiveCts;
-    private Task? _udpReceiveTask;
-
-    public async Task<bool> StartUdpReceiveAsync(int localPort, int sampleRate = 48000, int channels = 1, CancellationToken ct = default)
-    {
-        await StopUdpReceiveAsync();
-
-        _receiveSampleRate = sampleRate;
-        _receiveChannels = channels;
-        _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
-
-        if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.StartPlayback(sampleRate, channels))
-        {
-            _log.Error("[Audio] Android playback bridge is unavailable.");
-            return false;
-        }
-
-        _udpReceiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var token = _udpReceiveCts.Token;
-
-        _udpReceiveTask = Task.Run(async () =>
-        {
-            using var receiver = new UdpClient(localPort);
-            _log.Info($"[Audio] Receiving UDP audio on 127.0.0.1:{localPort}");
-
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    var packet = await receiver.ReceiveAsync(token);
-                    DecodeAndPlay(packet.Buffer);
-                }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex)
-                {
-                    _log.Warning($"[Audio] UDP receive loop error: {ex.Message}");
-                }
-            }
-        }, token);
-
-        IsReceiving = true;
-        return true;
-    }
-
-    public async Task StopUdpReceiveAsync()
-    {
-        if (_udpReceiveCts != null)
-        {
-            _udpReceiveCts.Cancel();
-            if (_udpReceiveTask != null)
-            {
-                try { await _udpReceiveTask; } catch { }
-            }
-            _udpReceiveCts.Dispose();
-            _udpReceiveCts = null;
-            _udpReceiveTask = null;
-        }
-
-        if (OperatingSystem.IsAndroid())
-        {
-            RuntimeBridge?.StopPlayback();
-        }
-        else
-        {
-            CleanupPlayback();
-        }
-
-        IsReceiving = false;
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
     // SEND – Desktop loopback (system audio) over SSH-tunneled TCP
     // ═════════════════════════════════════════════════════════════════════════
 
@@ -287,8 +213,8 @@ public class AudioStreamingService
         _sendSampleRate = deviceRate;
         _sendChannels = 1;
         _sendFrameSize = _sendSampleRate / 50;
-        _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_AUDIO);
-        _sendEncoder.Bitrate = 32000;
+        _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
+        _sendEncoder.Bitrate = 48000;
 
         _desktopLoopbackCapture.DataAvailable += (_, args) =>
         {
@@ -325,7 +251,6 @@ public class AudioStreamingService
 
     /// <summary>
     /// Captures microphone audio and sends it over an SSH-tunneled TCP stream.
-    /// On Android, sends via local UDP (Go mesh bridge handles the mesh routing).
     /// </summary>
     public async Task<bool> StartMicrophoneSendAsync(Models.Device target, string pkeyPath, CancellationToken ct = default)
     {
@@ -334,36 +259,34 @@ public class AudioStreamingService
         _sendSampleRate = 48000;
         _sendChannels = 1;
         _sendFrameSize = 960;
-        _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_VOIP);
+        _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
         _sendEncoder.Bitrate = 24000;
+
+        // Establish the low-latency SSH tunnel (bypasses Windows PC UDP limits)
+        if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
+            return false;
 
         if (OperatingSystem.IsAndroid())
         {
-            // Android: send via local UDP -> Go mesh bridge
-            TailscaleService.Instance.NativeBridge?.SetAudioTargetHost(target.IpAddress);
-
             if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.CanCaptureMicrophone)
             {
                 _log.Error("[Audio] Android microphone bridge unavailable.");
+                DisconnectSendStream();
                 return false;
             }
 
-            _udpSendClient = new UdpClient();
-            var endpoint = new IPEndPoint(IPAddress.Loopback, 4002);
-
-            bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendUdpFrames(samples, endpoint), _sendSampleRate, _sendChannels);
+            // Stream PCM direct into the TCP tunnel instead of using local UDP
+            bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Android microphone streaming -> local UDP :4002"
+                ? $"[Audio] Android microphone streaming -> {target.IpAddress} via SSH tunnel"
                 : "[Audio] Failed to start Android microphone capture.");
 
+            if (!started) DisconnectSendStream();
             return started;
         }
 
         // Desktop: send via SSH tunnel
-        if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
-            return false;
-
         _desktopMicCapture = new WaveInEvent
         {
             WaveFormat = new WaveFormat(_sendSampleRate, 16, _sendChannels),
@@ -481,7 +404,7 @@ public class AudioStreamingService
     public async Task StopAllAsync()
     {
         StopSend();
-        await StopUdpReceiveAsync();
+        await Task.CompletedTask;
         // Note: the TCP server keeps running (like RemoteControlService.StartServer)
         // Individual incoming connections are cleaned up when they end
     }
@@ -521,10 +444,10 @@ public class AudioStreamingService
         _desktopPlaybackBuffer = new BufferedWaveProvider(new WaveFormat(sampleRate, 16, channels))
         {
             DiscardOnBufferOverflow = true,
-            BufferDuration = TimeSpan.FromMilliseconds(500)
+            BufferDuration = TimeSpan.FromMilliseconds(50)
         };
 
-        _desktopPlaybackOutput = new WaveOutEvent();
+        _desktopPlaybackOutput = new WaveOutEvent() { DesiredLatency = 50 };
         _desktopPlaybackOutput.Init(_desktopPlaybackBuffer);
         _desktopPlaybackOutput.Play();
     }

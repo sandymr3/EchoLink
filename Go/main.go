@@ -233,6 +233,7 @@ func startUdpAudioProxy() {
 			}
 
 			if n > 0 {
+				log.Printf("[Go] Received %d bytes of UDP audio from mesh.", n)
 				_, wErr := localPlaybackConn.Write(buf[:n])
 				if wErr != nil {
 					log.Printf("[Go] local playback write error: %v", wErr)
@@ -258,9 +259,9 @@ func startUdpAudioProxy() {
 				continue
 			}
 
-			remoteConn, dialErr := tsServer.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", target, 4002))
+			remoteConn, dialErr := tsServer.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", target, 4000))
 			if dialErr != nil {
-				log.Printf("[Go] audio uplink dial error to %s:4002: %v", target, dialErr)
+				log.Printf("[Go] audio uplink dial error to %s:4000: %v", target, dialErr)
 				continue
 			}
 
