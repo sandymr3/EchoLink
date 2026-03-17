@@ -45,21 +45,24 @@ public class EchoLinkForegroundService : Service
                     string configDir = Path.Combine(filesDir.AbsolutePath, "tailscale");
                     if (!Directory.Exists(configDir)) Directory.CreateDirectory(configDir);
 
-                    // Quick helper to get the Android device's local Wi-Fi IP
+                    // Fetch local IP using Android native ConnectivityManager for better reliability
                     string localIp = "";
                     try
                     {
-                        foreach (var netInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                        var connectivityManager = (global::Android.Net.ConnectivityManager?)GetSystemService(ConnectivityService);
+                        var activeNetwork = connectivityManager?.ActiveNetwork;
+                        if (activeNetwork != null)
                         {
-                            if (netInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211 ||
-                                netInterface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Ethernet ||
-                                netInterface.Name.Contains("wlan", StringComparison.OrdinalIgnoreCase))
+                            var linkProperties = connectivityManager?.GetLinkProperties(activeNetwork);
+                            if (linkProperties != null)
                             {
-                                foreach (var addrInfo in netInterface.GetIPProperties().UnicastAddresses)
+                                foreach (var linkAddress in linkProperties.LinkAddresses)
                                 {
-                                    if (addrInfo.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(addrInfo.Address))
+                                    var address = linkAddress.Address;
+                                    if (address is global::Java.Net.Inet4Address && !address.IsLoopbackAddress)
                                     {
-                                        localIp = addrInfo.Address.ToString();
+                                        localIp = address.HostAddress ?? "";
+                                        break;
                                     }
                                 }
                             }
@@ -67,7 +70,35 @@ public class EchoLinkForegroundService : Service
                     }
                     catch (Exception ex)
                     {
-                        global::Android.Util.Log.Warn("EchoLinkService", $"Failed to fetch local IP: {ex.Message}");
+                        global::Android.Util.Log.Warn("EchoLinkService", $"Failed to fetch local IP natively: {ex.Message}");
+                    }
+
+                    // Fallback to .NET networking if native approach fails or returns empty (e.g. some mobile data connections)
+                    if (string.IsNullOrEmpty(localIp))
+                    {
+                        try
+                        {
+                            foreach (var netInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                            {
+                                if (netInterface.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up &&
+                                    netInterface.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                                {
+                                    foreach (var addrInfo in netInterface.GetIPProperties().UnicastAddresses)
+                                    {
+                                        if (addrInfo.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(addrInfo.Address))
+                                        {
+                                            localIp = addrInfo.Address.ToString();
+                                            break;
+                                        }
+                                    }
+                                    if (!string.IsNullOrEmpty(localIp)) break;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            global::Android.Util.Log.Warn("EchoLinkService", $"Fallback IP fetch failed: {ex.Message}");
+                        }
                     }
 
                     global::Android.Util.Log.Info("EchoLinkService", $"Calling StartEchoLinkNode with dir: {configDir}, Local IP: {localIp}");
