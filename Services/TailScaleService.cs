@@ -50,6 +50,32 @@ public class TailscaleService
     /// </summary>
     public void ResetRunningState() { }
 
+    private void KillExistingDaemons()
+    {
+        try
+        {
+            var processes = Process.GetProcessesByName(OperatingSystem.IsWindows() ? "tailscaled" : "tailscaled");
+            foreach (var p in processes)
+            {
+                if (p.Id == Environment.ProcessId) continue;
+                
+                try 
+                {
+                    _log.Info($"[Tailscale] Attempting to kill orphaned daemon process (PID {p.Id})");
+                    p.Kill(); 
+                } 
+                catch 
+                { 
+                    // Ignore processes we don't have permission to kill (e.g. system-wide tailscaled)
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Tailscale] Failed to enumerate existing daemons: {ex.Message}");
+        }
+    }
+
     public void StartDaemon()
     {
         if (OperatingSystem.IsAndroid())
@@ -57,6 +83,8 @@ public class TailscaleService
             _log.Info("[Tailscale] Android detected. Daemon is managed by EchoLinkForegroundService.");
             return;
         }
+
+        KillExistingDaemons();
 
         _log.Info($"[Tailscale] OS: {Environment.OSVersion} | IsWindows={OperatingSystem.IsWindows()}");
         _log.Info($"[Tailscale] AppBase: {AppDomain.CurrentDomain.BaseDirectory}");

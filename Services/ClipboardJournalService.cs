@@ -104,13 +104,20 @@ public class ClipboardJournalService
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                var msg = JsonSerializer.Deserialize<ClipboardSyncMessage>(line);
-                if (msg is null || string.IsNullOrWhiteSpace(msg.EventId))
-                    continue;
+                try
+                {
+                    var msg = JsonSerializer.Deserialize<ClipboardSyncMessage>(line);
+                    if (msg is null || string.IsNullOrWhiteSpace(msg.EventId))
+                        continue;
 
-                _seenEventIds.Add(msg.EventId);
-                if (msg.Sequence > _lastSequence)
-                    _lastSequence = msg.Sequence;
+                    _seenEventIds.Add(msg.EventId);
+                    if (msg.Sequence > _lastSequence)
+                        _lastSequence = msg.Sequence;
+                }
+                catch
+                {
+                    // Ignore corrupted lines so they don't break the whole index
+                }
             }
         }
         catch (Exception ex)

@@ -11,6 +11,9 @@ public interface IAudioRuntimeBridge
     bool StartMicrophoneCapture(Action<short[]> onPcmFrame, int sampleRate, int channels);
     void StopMicrophoneCapture();
 
+    bool StartSystemAudioCapture(Action<short[]> onPcmFrame, int sampleRate, int channels);
+    void StopSystemAudioCapture();
+
     bool StartPlayback(int sampleRate, int channels);
     void PlayPcm(short[] samples, int sampleRate, int channels);
     void StopPlayback();

@@ -90,6 +90,16 @@ public class AndroidAudioRuntimeBridge : IAudioRuntimeBridge
         _log.Info("[Audio][Android] Microphone capture stopped.");
     }
 
+    public bool StartSystemAudioCapture(Action<short[]> onPcmFrame, int sampleRate, int channels)
+    {
+        _log.Error("[Audio][Android] System audio capture is not supported.");
+        return false;
+    }
+
+    public void StopSystemAudioCapture()
+    {
+    }
+
     public bool StartPlayback(int sampleRate, int channels)
     {
         StopPlayback();

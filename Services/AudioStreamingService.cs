@@ -122,11 +122,11 @@ public class AudioStreamingService
             var stream = client.GetStream();
             _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
 
-            if (OperatingSystem.IsAndroid())
+            if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
             {
                 if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.StartPlayback(_receiveSampleRate, _receiveChannels))
                 {
-                    _log.Error("[Audio] Android playback bridge is unavailable.");
+                    _log.Error("[Audio] Playback bridge is unavailable.");
                     return;
                 }
             }
@@ -186,9 +186,41 @@ public class AudioStreamingService
             return false;
         }
 
+        if (OperatingSystem.IsLinux())
+        {
+            StopSend();
+
+            _sendSampleRate = 48000;
+            _sendChannels = 1;
+            _sendFrameSize = 960;
+            _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
+            _sendEncoder.Bitrate = 48000;
+
+            if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
+                return false;
+
+            if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.CanCaptureSystemAudio)
+            {
+                _log.Error("[Audio] System audio bridge unavailable on Linux.");
+                DisconnectSendStream();
+                return false;
+            }
+
+            // Note: LinuxAudioRuntimeBridge.StartSystemAudioCapture captures the system audio 
+            // routed to the EchoLink_Sink virtual microphone.
+            bool started = RuntimeBridge.StartSystemAudioCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
+            IsSending = started;
+            _log.Info(started
+                ? $"[Audio] Linux System audio streaming -> {target.IpAddress} via SSH tunnel"
+                : "[Audio] Failed to start system audio capture.");
+
+            if (!started) DisconnectSendStream();
+            return started;
+        }
+
         if (!OperatingSystem.IsWindows())
         {
-            _log.Warning("[Audio] Loopback send currently supports Windows desktop only.");
+            _log.Warning("[Audio] Loopback send currently supports Windows desktop and Linux only.");
             return false;
         }
 
@@ -266,11 +298,11 @@ public class AudioStreamingService
         if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
             return false;
 
-        if (OperatingSystem.IsAndroid())
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
         {
             if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.CanCaptureMicrophone)
             {
-                _log.Error("[Audio] Android microphone bridge unavailable.");
+                _log.Error("[Audio] Microphone bridge unavailable.");
                 DisconnectSendStream();
                 return false;
             }
@@ -279,14 +311,14 @@ public class AudioStreamingService
             bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Android microphone streaming -> {target.IpAddress} via SSH tunnel"
-                : "[Audio] Failed to start Android microphone capture.");
+                ? $"[Audio] Microphone streaming -> {target.IpAddress} via SSH tunnel"
+                : "[Audio] Failed to start microphone capture.");
 
             if (!started) DisconnectSendStream();
             return started;
         }
 
-        // Desktop: send via SSH tunnel
+        // Desktop (Windows): send via SSH tunnel
         _desktopMicCapture = new WaveInEvent
         {
             WaveFormat = new WaveFormat(_sendSampleRate, 16, _sendChannels),
@@ -367,9 +399,10 @@ public class AudioStreamingService
 
     public void StopSend()
     {
-        if (OperatingSystem.IsAndroid())
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
         {
             RuntimeBridge?.StopMicrophoneCapture();
+            RuntimeBridge?.StopSystemAudioCapture();
         }
 
         if (_desktopLoopbackCapture != null)
@@ -425,7 +458,7 @@ public class AudioStreamingService
         short[] frame = new short[totalSamples];
         Array.Copy(pcmBuffer, frame, totalSamples);
 
-        if (OperatingSystem.IsAndroid())
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
         {
             RuntimeBridge?.PlayPcm(frame, _receiveSampleRate, _receiveChannels);
         }
@@ -493,6 +526,15 @@ public class AudioStreamingService
             _sendAccumulator.AddRange(samples);
 
             int needed = _sendFrameSize * _sendChannels;
+
+            // LATENCY SHIELD: If we have more than 200ms of audio buffered (10 frames), 
+            // the network/tunnel is too slow. Drop the old data to avoid massive lag and static.
+            if (_sendAccumulator.Count > needed * 10)
+            {
+                _log.Warning($"[Audio] Send buffer backlog detected ({_sendAccumulator.Count} samples). Dropping frames to maintain real-time.");
+                _sendAccumulator.RemoveRange(0, _sendAccumulator.Count - needed);
+            }
+
             while (_sendAccumulator.Count >= needed)
             {
                 short[] frame = new short[needed];

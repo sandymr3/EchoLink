@@ -21,6 +21,10 @@
     <Content Include="Binaries\tailscale">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\Scripts\setup_linux_virtual_mic.sh">
+      <Link>Scripts\setup_linux_virtual_mic.sh</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
