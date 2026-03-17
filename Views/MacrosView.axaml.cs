@@ -17,7 +17,7 @@ public partial class MacrosView : UserControl
         if (sender is Button { Tag: MacroButton macro } &&
             DataContext is MacrosViewModel vm)
         {
-            _ = vm.ExecuteMacroCommand.ExecuteAsync(macro);
+            vm.ExecuteMacroCommand.Execute(macro);
         }
     }
 

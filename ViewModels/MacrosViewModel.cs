@@ -14,9 +14,11 @@ public partial class MacrosViewModel : ViewModelBase
     private readonly LoggingService _log = LoggingService.Instance;
     private const int Socks5Port = 1055;
 
-    // ── Macro list ───────────────────────────────────────────────────────
-    public ObservableCollection<MacroButton> Macros { get; } = new();
-    public bool HasNoMacros => Macros.Count == 0;
+    // ── Macro collections ────────────────────────────────────────────────
+    public ObservableCollection<MacroButton> Macros         { get; } = new();
+    /// <summary>OS-filtered view of Macros, driven by the selected ExecuteTarget.</summary>
+    public ObservableCollection<MacroButton> FilteredMacros { get; } = new();
+    public bool HasNoMacros => FilteredMacros.Count == 0;
 
     // ── Inline editor state ──────────────────────────────────────────────
     [ObservableProperty] private bool _isEditing;
@@ -36,7 +38,7 @@ public partial class MacrosViewModel : ViewModelBase
 
     public MacrosViewModel()
     {
-        Macros.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoMacros));
+        FilteredMacros.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoMacros));
         MacroService.Instance.MacrosChanged += OnExternalMacrosChanged;
         LoadMacros();
         _ = LoadDevicesAsync();
@@ -49,11 +51,12 @@ public partial class MacrosViewModel : ViewModelBase
         Macros.Clear();
         foreach (var m in MacroService.Instance.Load())
             Macros.Add(m);
+        RefreshFilter();
     }
 
     private void OnExternalMacrosChanged()
     {
-        // Fired by FileSystemWatcher (background thread) - must dispatch to UI
+        // Fired by FileSystemWatcher (background thread) – dispatch to UI
         Avalonia.Threading.Dispatcher.UIThread.Post(LoadMacros);
         _log.Info("[Macros] macros.json changed externally — reloaded.");
     }
@@ -75,6 +78,43 @@ public partial class MacrosViewModel : ViewModelBase
         catch (Exception ex)
         {
             _log.Error($"[Macros] Load devices failed: {ex.Message}");
+        }
+    }
+
+    // ── OS Filtering ─────────────────────────────────────────────────────
+
+    partial void OnExecuteTargetChanged(Device? value) => RefreshFilter();
+
+    private void RefreshFilter()
+    {
+        FilteredMacros.Clear();
+        string? targetOs = ExecuteTarget?.Os; // e.g. "windows", "linux", "darwin"
+
+        foreach (var m in Macros)
+        {
+            if (m.TargetOs is null)
+            {
+                // No filter – runs anywhere
+                FilteredMacros.Add(m);
+                continue;
+            }
+
+            if (targetOs is null)
+            {
+                // No target selected – show everything
+                FilteredMacros.Add(m);
+                continue;
+            }
+
+            bool targetIsWindows = targetOs.Contains("windows", StringComparison.OrdinalIgnoreCase);
+            bool targetIsLinux   = targetOs.Contains("linux",   StringComparison.OrdinalIgnoreCase);
+
+            bool macroMatchesTarget =
+                (m.TargetOs.Equals("Windows", StringComparison.OrdinalIgnoreCase) && targetIsWindows) ||
+                (m.TargetOs.Equals("Linux",   StringComparison.OrdinalIgnoreCase) && targetIsLinux);
+
+            if (macroMatchesTarget)
+                FilteredMacros.Add(m);
         }
     }
 
@@ -111,9 +151,14 @@ public partial class MacrosViewModel : ViewModelBase
 
         Macros.Add(macro);
         MacroService.Instance.Save([.. Macros]);
+        RefreshFilter();
         IsEditing = false;
         StatusText = $"✔ '{macro.Name}' saved.";
         _log.Info($"[Macros] Added macro '{macro.Name}'");
+
+        // Auto-broadcast to mesh if the user opted in
+        if (macro.SyncToMesh)
+            _ = SyncToMeshAsync();
     }
 
     [RelayCommand]
@@ -124,6 +169,7 @@ public partial class MacrosViewModel : ViewModelBase
     {
         Macros.Remove(macro);
         MacroService.Instance.Save([.. Macros]);
+        RefreshFilter();
         StatusText = $"Deleted '{macro.Name}'";
         _log.Info($"[Macros] Deleted macro '{macro.Name}'");
     }
@@ -131,45 +177,43 @@ public partial class MacrosViewModel : ViewModelBase
     // ── Execution ────────────────────────────────────────────────────────
 
     [RelayCommand]
-    private async Task ExecuteMacroAsync(MacroButton macro)
+    private void ExecuteMacroAsync(MacroButton macro)
     {
         if (macro is null) return;
 
-        // Filter by TargetOs if set
-        if (macro.TargetOs is not null)
-        {
-            bool osMatch = macro.TargetOs.Equals("Windows", StringComparison.OrdinalIgnoreCase)
-                ? OperatingSystem.IsWindows()
-                : macro.TargetOs.Equals("Linux", StringComparison.OrdinalIgnoreCase)
-                    ? OperatingSystem.IsLinux()
-                    : true;
+        // Immediate visual feedback
+        StatusText = $"⚡ '{macro.Name}' sent → {ExecuteTarget?.Name ?? "this device"}";
+        FlashMacro(macro);
 
-            if (!osMatch && (ExecuteTarget?.IsSelf ?? true))
-            {
-                StatusText = $"⚠ '{macro.Name}' is for {macro.TargetOs} only.";
-                return;
-            }
-        }
+        // Fire the actual command as a background task (true fire-and-forget)
+        _ = DispatchCommandAsync(macro);
+    }
 
+    private async Task DispatchCommandAsync(MacroButton macro)
+    {
         try
         {
             if (ExecuteTarget is null || ExecuteTarget.IsSelf)
-            {
                 await RunLocallyAsync(macro.Command);
-            }
             else
-            {
                 await FireRemoteCommandAsync(macro.Command, ExecuteTarget);
-            }
 
-            StatusText = $"⚡ '{macro.Name}' fired on {ExecuteTarget?.Name ?? "this device"}";
             _log.Info($"[Macros] Fired '{macro.Name}' → {ExecuteTarget?.Name ?? "local"}");
         }
         catch (Exception ex)
         {
-            StatusText = $"❌ {ex.Message}";
             _log.Error($"[Macros] Execute '{macro.Name}' failed: {ex.Message}");
+            // Update status on UI thread; don't surface a crash dialog for bad commands
+            Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => StatusText = $"⚠ '{macro.Name}': {ex.Message}");
         }
+    }
+
+    private static void FlashMacro(MacroButton macro)
+    {
+        macro.IsFlashing = true;
+        _ = Task.Delay(1500).ContinueWith(_ =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => macro.IsFlashing = false));
     }
 
     private static Task RunLocallyAsync(string command) =>
@@ -204,8 +248,9 @@ public partial class MacrosViewModel : ViewModelBase
 
             using var client = new SshClient(connectionInfo);
             client.Connect();
-            // Fire-and-forget: don't wait for output
-            client.CreateCommand(command).Execute();
+            // Send the command; do not read stdout/stderr (fire-and-forget at the channel level)
+            using var cmd = client.CreateCommand(command);
+            cmd.Execute();
             client.Disconnect();
         });
     }
@@ -220,7 +265,8 @@ public partial class MacrosViewModel : ViewModelBase
         try
         {
             await MacroService.Instance.SyncToMeshAsync([.. Macros], OnlineDevices);
-            StatusText = $"✔ Macros synced to {OnlineDevices.Count(d => d.IsOnline && !d.IsSelf)} peers";
+            int peerCount = OnlineDevices.Count(d => d.IsOnline && !d.IsSelf);
+            StatusText = $"✔ Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}";
         }
         catch (Exception ex)
         {

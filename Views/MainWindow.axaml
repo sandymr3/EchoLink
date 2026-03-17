@@ -52,7 +52,10 @@
                 </StackPanel>
 
                 <!-- Nav buttons -->
-                <StackPanel DockPanel.Dock="Top" Margin="12,0" Spacing="4">
+                <ScrollViewer DockPanel.Dock="Top"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="12,0" Spacing="4">
 
                     <Button Classes="Nav"
                             Command="{Binding NavigateDashboardCommand}"
@@ -99,6 +102,24 @@
                         </StackPanel>
                     </Button>
 
+                    <Button Classes="Nav"
+                            Command="{Binding NavigateSystemMonitorCommand}"
+                            HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="📊" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="System Monitor" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="Nav"
+                            Command="{Binding NavigateMacrosCommand}"
+                            HorizontalAlignment="Stretch">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="⚡" FontSize="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="Macro Buttons" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
                     <Border Height="1" Background="#2D2D2D" Margin="0,8"/>
 
                     <Button Classes="Nav"
@@ -110,6 +131,7 @@
                         </StackPanel>
                     </Button>
                 </StackPanel>
+                </ScrollViewer>
 
                 <!-- Bottom: SSH Status + Logout + Version -->
                 <StackPanel DockPanel.Dock="Bottom" Margin="12,0,12,12" Spacing="8">

@@ -136,7 +136,7 @@
             </Border>
 
             <!-- Macro tiles grid -->
-            <ItemsControl ItemsSource="{Binding Macros}">
+            <ItemsControl ItemsSource="{Binding FilteredMacros}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <WrapPanel Orientation="Horizontal"/>
@@ -182,6 +182,7 @@
                                 <Button Content="▶ Run"
                                         Tag="{Binding}"
                                         Click="OnRunMacroClicked"
+                                        Classes.fired="{Binding IsFlashing}"
                                         HorizontalAlignment="Stretch"
                                         HorizontalContentAlignment="Center"
                                         Background="#1A2A1A" Foreground="#00E676"

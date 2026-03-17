@@ -123,7 +123,7 @@
                     <ProgressBar Value="{Binding RamUsage}" Minimum="0" Maximum="100"
                                  Height="8" CornerRadius="4" Foreground="#00E676"/>
 
-                    <TextBlock Text="of RAM capacity" FontSize="11" Foreground="#404040"
+                    <TextBlock Text="{Binding RamDetailText}" FontSize="11" Foreground="#404040"
                                HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>

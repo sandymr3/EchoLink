@@ -19,6 +19,7 @@ public partial class SystemMonitorViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Select a device and click Connect";
     [ObservableProperty] private double _cpuUsage;
     [ObservableProperty] private double _ramUsage;
+    [ObservableProperty] private string _ramDetailText = "— / —";
     [ObservableProperty] private string _lastUpdated = "—";
     [ObservableProperty] private string _cpuLabel = "CPU";
     [ObservableProperty] private string _ramLabel = "RAM";
@@ -28,7 +29,7 @@ public partial class SystemMonitorViewModel : ViewModelBase
     private SshClient? _sshClient;
     private ITelemetryStrategy? _strategy;
     private DispatcherTimer? _pollTimer;
-    private bool _isPolling;
+    private volatile bool _isPolling;
 
     public SystemMonitorViewModel()
     {
@@ -61,6 +62,7 @@ public partial class SystemMonitorViewModel : ViewModelBase
         StatusText = $"Connecting to {SelectedDevice.Name}…";
         CpuUsage = 0;
         RamUsage = 0;
+        RamDetailText = "— / —";
         LastUpdated = "—";
 
         try
@@ -97,7 +99,7 @@ public partial class SystemMonitorViewModel : ViewModelBase
             // Run first poll immediately
             await PollTelemetryAsync();
 
-            // Start poll timer
+            // Start poll timer — tick is skipped if previous poll is still running
             _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             _pollTimer.Tick += async (_, _) => await PollTelemetryAsync();
             _pollTimer.Start();
@@ -121,6 +123,7 @@ public partial class SystemMonitorViewModel : ViewModelBase
         IsConnected = false;
         CpuUsage = 0;
         RamUsage = 0;
+        RamDetailText = "— / —";
         LastUpdated = "—";
         CpuLabel = "CPU";
         RamLabel = "RAM";
@@ -130,23 +133,49 @@ public partial class SystemMonitorViewModel : ViewModelBase
 
     private async Task PollTelemetryAsync()
     {
-        if (_isPolling || _sshClient is null || !_sshClient.IsConnected || _strategy is null) return;
+        // Hang-test guard: skip tick if previous request hasn't finished
+        if (_isPolling || _sshClient is null || _strategy is null) return;
         _isPolling = true;
 
         try
         {
-            var cpu = await _strategy.GetCpuUsageAsync(_sshClient);
-            var ram = await _strategy.GetRamUsageAsync(_sshClient);
+            // Connection-drop check before attempting the command
+            if (!_sshClient.IsConnected)
+            {
+                HandleConnectionDrop();
+                return;
+            }
 
-            // These assignments happen on the UI thread (DispatcherTimer.Tick context)
-            CpuUsage = Math.Round(cpu, 1);
-            RamUsage = Math.Round(ram, 1);
-            LastUpdated = $"Updated {DateTime.Now:HH:mm:ss}";
+            var snapshot = await _strategy.GetSnapshotAsync(_sshClient);
+
+            // Marshal back to UI thread
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                CpuUsage = Math.Round(snapshot.CpuLoadPercentage, 1);
+                RamUsage = Math.Round(snapshot.RamLoadPercentage, 1);
+                RamDetailText = $"{snapshot.UsedRamDisplay} / {snapshot.TotalRamDisplay}";
+                LastUpdated = $"Updated {DateTime.Now:HH:mm:ss}";
+            });
         }
         catch (Exception ex)
         {
-            StatusText = $"⚠ Poll failed: {ex.Message}";
-            _log.Warning($"[SysMonitor] Poll error: {ex.Message}");
+            // Detect broken SSH pipe
+            bool isConnectionError =
+                ex is Renci.SshNet.Common.SshConnectionException
+                || ex is System.Net.Sockets.SocketException
+                || ex is ObjectDisposedException
+                || (_sshClient?.IsConnected == false);
+
+            if (isConnectionError)
+            {
+                await Dispatcher.UIThread.InvokeAsync(HandleConnectionDrop);
+            }
+            else
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                    StatusText = $"⚠ Poll failed: {ex.Message}");
+                _log.Warning($"[SysMonitor] Poll error: {ex.Message}");
+            }
         }
         finally
         {
@@ -154,11 +183,27 @@ public partial class SystemMonitorViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Called on the UI thread when the SSH connection is detected as broken.
+    /// Stops the timer and updates UI to "Device Offline" state.
+    /// </summary>
+    private void HandleConnectionDrop()
+    {
+        _log.Warning("[SysMonitor] SSH connection lost — stopping poller.");
+        CleanupSsh();
+        IsConnected = false;
+        StatusText = "⚠ Device Offline";
+        LastUpdated = $"Lost {DateTime.Now:HH:mm:ss}";
+    }
+
     private static ITelemetryStrategy DetectStrategy(Device device)
     {
-        if (device.Os?.Contains("windows", StringComparison.OrdinalIgnoreCase) == true)
+        var os = device.Os ?? string.Empty;
+        if (os.Contains("windows", StringComparison.OrdinalIgnoreCase))
             return new WindowsTelemetryStrategy();
-        return new LinuxTelemetryStrategy(); // Default for Linux + Android
+        if (os.Contains("android", StringComparison.OrdinalIgnoreCase))
+            return new AndroidTelemetryStrategy();
+        return new LinuxTelemetryStrategy(); // Default: Linux, macOS, etc.
     }
 
     private void CleanupSsh()

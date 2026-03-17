@@ -1,34 +1,48 @@
-using System.Text.RegularExpressions;
+using System.Globalization;
+using EchoLink.Models;
 using Renci.SshNet;
 
 namespace EchoLink.Services;
 
+/// <summary>
+/// Single PowerShell command returns "cpu,totalKB,freeKB" — culture-invariant, no wmic.
+/// Resilient to non-English Windows locales because we control the output format.
+/// </summary>
 public class WindowsTelemetryStrategy : ITelemetryStrategy
 {
-    public async Task<double> GetCpuUsageAsync(SshClient client) =>
-        await Task.Run(() =>
+    // Produces e.g. "5,16380584,10234456"
+    private const string Command =
+        "powershell -NoProfile -NonInteractive -Command " +
+        "\"$c=(Get-CimInstance Win32_Processor).LoadPercentage;" +
+        "$m=Get-CimInstance Win32_OperatingSystem;" +
+        "'{0},{1},{2}' -f $c,$m.TotalVisibleMemorySize,$m.FreePhysicalMemory\"";
+
+    public Task<TelemetrySnapshot> GetSnapshotAsync(SshClient client) =>
+        Task.Run(() =>
         {
-            var cmd = client.CreateCommand("wmic cpu get loadpercentage /value");
-            cmd.Execute();
-            var match = Regex.Match(cmd.Result, @"LoadPercentage=(\d+)", RegexOptions.IgnoreCase);
-            return match.Success ? double.Parse(match.Groups[1].Value) : 0.0;
-        });
+            try
+            {
+                using var cmd = client.CreateCommand(Command);
+                cmd.CommandTimeout = TimeSpan.FromSeconds(12);
+                var output = cmd.Execute().Trim();
 
-    public async Task<double> GetRamUsageAsync(SshClient client) =>
-        await Task.Run(() =>
-        {
-            var totalCmd = client.CreateCommand("wmic ComputerSystem get TotalPhysicalMemory /value");
-            totalCmd.Execute();
-            var freeCmd = client.CreateCommand("wmic OS get FreePhysicalMemory /value");
-            freeCmd.Execute();
+                var parts = output.Split(',');
+                if (parts.Length < 3
+                    || !double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out var cpu)
+                    || !long.TryParse(parts[1].Trim(), out var totalKb)
+                    || !long.TryParse(parts[2].Trim(), out var freeKb))
+                {
+                    return TelemetrySnapshot.Empty;
+                }
 
-            var totalMatch = Regex.Match(totalCmd.Result, @"TotalPhysicalMemory=(\d+)");
-            var freeMatch  = Regex.Match(freeCmd.Result,  @"FreePhysicalMemory=(\d+)");
-            if (!totalMatch.Success || !freeMatch.Success) return 0.0;
-
-            long totalBytes = long.Parse(totalMatch.Groups[1].Value);
-            long freeKb     = long.Parse(freeMatch.Groups[1].Value);
-            long usedBytes  = totalBytes - (freeKb * 1024L);
-            return totalBytes > 0 ? (double)usedBytes / totalBytes * 100.0 : 0.0;
+                return new TelemetrySnapshot(
+                    Math.Clamp(cpu, 0, 100),
+                    totalKb * 1024L,
+                    (totalKb - freeKb) * 1024L);
+            }
+            catch
+            {
+                return TelemetrySnapshot.Empty;
+            }
         });
 }

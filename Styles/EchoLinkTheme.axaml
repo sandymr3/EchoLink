@@ -63,6 +63,12 @@
         <Setter Property="Cursor"       Value="Hand"/>
     </Style>
 
+    <!-- ── Macro Run button – "fired" flash (green pulse, ~1.5 s) ────────── -->
+    <Style Selector="Button.fired /template/ ContentPresenter">
+        <Setter Property="Background" Value="#00E676"/>
+        <Setter Property="TextElement.Foreground" Value="#0A1A0A"/>
+    </Style>
+
     <!-- ── Ghost / nav button ───────────────────────────────────────────── -->
     <Style Selector="Button.Nav">
         <Setter Property="Background"   Value="Transparent"/>
