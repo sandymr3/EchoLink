@@ -177,7 +177,7 @@ public partial class MacrosViewModel : ViewModelBase
     // ── Execution ────────────────────────────────────────────────────────
 
     [RelayCommand]
-    private void ExecuteMacroAsync(MacroButton macro)
+    private void ExecuteMacro(MacroButton macro)
     {
         if (macro is null) return;
 
