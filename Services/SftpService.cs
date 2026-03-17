@@ -15,6 +15,42 @@ public class SftpService
     private readonly LoggingService _log = LoggingService.Instance;
     private const int Socks5Port = 1055;
 
+    /// <summary>
+    /// Creates a ConnectionInfo that tries SOCKS5 proxy first.
+    /// Falls back to direct TCP if SOCKS5 is unavailable (system-mode Tailscale).
+    /// </summary>
+    private ConnectionInfo CreateConnectionInfo(string host, int sshPort, string username, PrivateKeyFile key)
+    {
+        // Check if the SOCKS5 proxy is actually listening before using it.
+        bool socks5Available = IsSocks5Available();
+        if (socks5Available)
+        {
+            _log.Info($"[SFTP] Using SOCKS5 proxy (localhost:{Socks5Port}) → {host}:{sshPort}");
+            return new ConnectionInfo(host, sshPort, username,
+                ProxyTypes.Socks5, "127.0.0.1", Socks5Port, "", "",
+                new PrivateKeyAuthenticationMethod(username, key));
+        }
+        else
+        {
+            _log.Info($"[SFTP] SOCKS5 not available — connecting directly to {host}:{sshPort}");
+            return new ConnectionInfo(host, sshPort, username,
+                new PrivateKeyAuthenticationMethod(username, key));
+        }
+    }
+
+    private bool IsSocks5Available()
+    {
+        try
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            var result = tcp.BeginConnect("127.0.0.1", Socks5Port, null, null);
+            bool connected = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(300));
+            if (connected && tcp.Connected) { tcp.EndConnect(result); return true; }
+            return false;
+        }
+        catch { return false; }
+    }
+
     public async Task UploadStreamAsync(
         string host, 
         string username, 
@@ -29,22 +65,10 @@ public class SftpService
         await Task.Run(() =>
         {
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
-            // Configure connection to go through the Tailscale SOCKS5 proxy    
-            var connectionInfo = new ConnectionInfo(
-                host,
-                sshPort,
-                username,
-                ProxyTypes.Socks5,
-                "127.0.0.1",
-                Socks5Port,
-                "",
-                "",
-                new PrivateKeyAuthenticationMethod(username, privateKeyFile));
-            
+            var connectionInfo = CreateConnectionInfo(host, sshPort, username, privateKeyFile);
             using var client = new SftpClient(connectionInfo);
             try
             {
-                _log.Info($"[SFTP] Connecting to {host} via SOCKS5 proxy...");
                 client.Connect();
 
                 // Compute the absolute remote path
@@ -121,22 +145,11 @@ public class SftpService
         await Task.Run(() =>
         {
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
-            // Configure connection to go through the Tailscale SOCKS5 proxy    
-            var connectionInfo = new ConnectionInfo(
-                host,
-                sshPort,
-                username,
-                ProxyTypes.Socks5,
-                "127.0.0.1",
-                Socks5Port,
-                "",
-                "",
-                new PrivateKeyAuthenticationMethod(username, privateKeyFile));
-            
+            var connectionInfo = CreateConnectionInfo(host, sshPort, username, privateKeyFile);
             using var client = new SftpClient(connectionInfo);
             try
             {
-                _log.Info($"[SFTP] Connecting to {host} via SOCKS5 proxy...");
+                _log.Info($"[SFTP] Connecting to {host}...");
                 client.Connect();
 
                 // Compute the absolute remote path
@@ -206,10 +219,7 @@ public class SftpService
         return await Task.Run(() =>
         {
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
-            var connectionInfo = new ConnectionInfo(
-                host, sshPort, username,
-                ProxyTypes.Socks5, "127.0.0.1", Socks5Port, "", "",
-                new PrivateKeyAuthenticationMethod(username, privateKeyFile));
+            var connectionInfo = CreateConnectionInfo(host, sshPort, username, privateKeyFile);
 
             using var client = new SftpClient(connectionInfo);
             try
@@ -221,7 +231,9 @@ public class SftpService
                 foreach (var f in client.ListDirectory(remotePath))
                 {
                     ct.ThrowIfCancellationRequested();
+                    // Skip navigation entries and hidden files (dot-prefixed on Linux)
                     if (f.Name is "." or "..") continue;
+                    if (f.Name.StartsWith('.')) continue;
                     entries.Add(new RemoteFileEntry
                     {
                         Name         = f.Name,
@@ -248,6 +260,8 @@ public class SftpService
 
     /// <summary>
     /// Downloads a file from a remote Tailscale node via SFTP.
+    /// Checks disk space, handles file locks, streams directly to disk, and
+    /// cleans up any partial file on failure or cancellation.
     /// </summary>
     public async Task DownloadFileAsync(
         string host,
@@ -262,41 +276,86 @@ public class SftpService
         await Task.Run(() =>
         {
             var privateKeyFile = new PrivateKeyFile(privateKeyPath);
-            var connectionInfo = new ConnectionInfo(
-                host,
-                sshPort,
-                username,
-                ProxyTypes.Socks5,
-                "127.0.0.1",
-                Socks5Port,
-                "",
-                "",
-new PrivateKeyAuthenticationMethod(username, privateKeyFile));
-            
+            var connectionInfo = CreateConnectionInfo(host, sshPort, username, privateKeyFile);
+
             using var client = new SftpClient(connectionInfo);
+            FileStream? fileStream = null;
+            bool downloadStarted = false;
             try
             {
                 client.Connect();
-                
+
+                // ── Determine remote file size ──────────────────────────
                 var remoteFile = client.Get(remotePath);
                 long totalBytes = remoteFile.Attributes.Size;
 
-                using var fileStream = File.Create(localPath);
-                client.DownloadFile(remotePath, fileStream, (downloaded) =>
+                // ── Disk space check ────────────────────────────────────
+                // Works on both Windows (C:\) and Linux (/)
+                string? root = Path.GetPathRoot(Path.GetFullPath(localPath));
+                if (root is not null)
                 {
+                    var drive = new DriveInfo(root);
+                    if (drive.AvailableFreeSpace < totalBytes)
+                    {
+                        throw new IOException(
+                            $"Not enough disk space. " +
+                            $"Need {FormatBytes(totalBytes)}, " +
+                            $"only {FormatBytes(drive.AvailableFreeSpace)} available on {root}");
+                    }
+                }
+
+                // ── Open local stream (catches file-lock conflicts) ─────
+                try
+                {
+                    fileStream = new FileStream(
+                        localPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                }
+                catch (IOException ex)
+                {
+                    throw new IOException(
+                        $"'{Path.GetFileName(localPath)}' is already open in another app. " +
+                        "Close it and try again.", ex);
+                }
+
+                downloadStarted = true;
+                _log.Info($"[SFTP] Downloading {remotePath} ({FormatBytes(totalBytes)}) → {localPath}");
+
+                // ── Streaming download with cancellation support ─────────
+                client.DownloadFile(remotePath, fileStream, downloaded =>
+                {
+                    ct.ThrowIfCancellationRequested();
                     progressCallback(checked((long)downloaded), totalBytes);
                 });
+
+                _log.Info($"[SFTP] Download complete: {Path.GetFileName(localPath)}");
             }
             catch (Exception ex)
             {
                 _log.Error($"[SFTP] Download failed: {ex.Message}");
+
+                // Clean up the partial/corrupt file so the user isn't left with garbage
+                fileStream?.Dispose();
+                fileStream = null;
+                if (downloadStarted)
+                {
+                    try { if (File.Exists(localPath)) File.Delete(localPath); }
+                    catch { /* best effort */ }
+                }
                 throw;
             }
             finally
             {
-                if (client.IsConnected)
-                    client.Disconnect();
+                fileStream?.Dispose();
+                if (client.IsConnected) client.Disconnect();
             }
         }, ct);
     }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        < 1024L         => $"{bytes} B",
+        < 1048576L      => $"{bytes / 1024.0:F1} KB",
+        < 1073741824L   => $"{bytes / 1048576.0:F1} MB",
+        _               => $"{bytes / 1073741824.0:F1} GB"
+    };
 }

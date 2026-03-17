@@ -120,6 +120,11 @@ public partial class FileTransferViewModel : ViewModelBase
 
             StatusText = $"{entries.Count} items in {path}";
         }
+        catch (Renci.SshNet.Common.SftpPermissionDeniedException)
+        {
+            StatusText = $"❌ Permission denied — cannot read {path}";
+            _log.Error($"[SFTP] Permission denied listing: {path}");
+        }
         catch (Exception ex)
         {
             StatusText = $"❌ {ex.Message}";
@@ -189,9 +194,22 @@ public partial class FileTransferViewModel : ViewModelBase
         {
             DownloadStatusText = "❌ Download cancelled.";
         }
+        catch (Renci.SshNet.Common.SftpPermissionDeniedException ex)
+        {
+            // Remote folder/file access denied (e.g. root-owned path)
+            DownloadStatusText = $"❌ Permission denied on remote: {ex.Message}";
+            _log.Error($"[SFTP] Permission denied: {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            // File lock collision or out-of-disk-space — message is user-friendly from SftpService
+            DownloadStatusText = $"❌ {ex.Message}";
+            _log.Error($"[SFTP] IO error: {ex.Message}");
+        }
         catch (Exception ex)
         {
-            DownloadStatusText = $"❌ {ex.Message}";
+            // Network drop, SSH timeout, etc.
+            DownloadStatusText = $"❌ Transfer failed: {ex.Message}";
             _log.Error($"[SFTP] Download failed: {ex.Message}");
         }
         finally
