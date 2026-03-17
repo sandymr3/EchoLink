@@ -360,6 +360,10 @@ namespace EchoLink.Services
                 Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /inheritance:r /q") { CreateNoWindow = true })?.WaitForExit();
                 Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant SYSTEM:(F) /q") { CreateNoWindow = true })?.WaitForExit();
                 Process.Start(new ProcessStartInfo("icacls", $"\"{authKeysPath}\" /grant \"{Environment.UserName}:(F)\" /q") { CreateNoWindow = true })?.WaitForExit();
+
+                // Windows OpenSSH defaults to C:\ProgramData\ssh\administrators_authorized_keys for
+                // admin accounts — ensure sshd_config is patched to use ~/.ssh/authorized_keys instead.
+                EnsureSshdConfigPatched();
             }
 
             // Check if key already exists to prevent duplicates
@@ -374,6 +378,45 @@ namespace EchoLink.Services
             {
                 await sw.WriteLineAsync();
                 await sw.WriteLineAsync(publicKey);
+            }
+        }
+
+        private static void EnsureSshdConfigPatched()
+        {
+            string sshdConfig = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "ssh", "sshd_config");
+
+            if (!File.Exists(sshdConfig)) return;
+
+            try
+            {
+                string content = File.ReadAllText(sshdConfig);
+                // If already patched (block is commented out), do nothing
+                if (!content.Contains("\nMatch Group administrators") &&
+                    !content.Contains("\r\nMatch Group administrators"))
+                    return;
+
+                content = content
+                    .Replace("\r\nMatch Group administrators",
+                             "\r\n#Match Group administrators")
+                    .Replace("\nMatch Group administrators",
+                             "\n#Match Group administrators")
+                    .Replace("AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys",
+                             "#       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys");
+
+                File.WriteAllText(sshdConfig, content);
+
+                // Restart sshd so the config change takes effect
+                Process.Start(new ProcessStartInfo("net", "stop sshd") { CreateNoWindow = true })?.WaitForExit(5000);
+                Process.Start(new ProcessStartInfo("net", "start sshd") { CreateNoWindow = true })?.WaitForExit(5000);
+
+                LoggingService.Instance.Info("[SshPairing] sshd_config patched — admin authorized_keys redirect removed.");
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: log and continue; user may need to run as admin or patch manually
+                LoggingService.Instance.Warning($"[SshPairing] Could not patch sshd_config: {ex.Message}");
             }
         }
     }

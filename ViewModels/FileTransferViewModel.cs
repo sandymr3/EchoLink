@@ -106,6 +106,14 @@ public partial class FileTransferViewModel : ViewModelBase
         {
             var pairingService = new SshPairingService(TailscaleService.Instance);
             await pairingService.EnsureKeyPairAsync();
+
+            if (!IsTargetPaired(SelectedTarget))
+            {
+                StatusText = "❌ Not paired — click 🔗 Pair on the Dashboard first";
+                IsLoadingDirectory = false;
+                return;
+            }
+
             string username = GetTargetUsername(SelectedTarget);
             int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
 
@@ -340,5 +348,11 @@ public partial class FileTransferViewModel : ViewModelBase
         return settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u)
             ? u
             : Environment.UserName;
+    }
+
+    private static bool IsTargetPaired(Device d)
+    {
+        var settings = SettingsService.Instance.Load();
+        return settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u);
     }
 }
