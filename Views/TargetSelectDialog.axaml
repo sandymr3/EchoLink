@@ -1,0 +1,171 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EchoLink.ViewModels"
+        xmlns:m="using:EchoLink.Models"
+        x:Class="EchoLink.Views.TargetSelectDialog"
+        x:DataType="vm:TargetSelectDialogViewModel"
+        Title="Select Target Device"
+        Width="420" Height="500"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#0D0D0D"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
+        SystemDecorations="BorderOnly">
+
+    <Border Background="#0D0D0D"
+            BorderBrush="#1E1E1E" BorderThickness="1"
+            CornerRadius="12">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+            <!-- Drag handle / title bar -->
+            <Border Grid.Row="0"
+                    Background="#111111"
+                    CornerRadius="12,12,0,0"
+                    Padding="20,14,16,14">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" Spacing="2">
+                        <TextBlock Text="⚡ Send Command"
+                                   FontSize="15" FontWeight="Bold"
+                                   Foreground="#FFFFFF"/>
+                        <TextBlock Text="{Binding MacroName, StringFormat='Macro: {0}'}"
+                                   FontSize="12" Foreground="#707070"/>
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Content="✕"
+                            Command="{Binding CancelCommand}"
+                            Background="Transparent"
+                            Foreground="#505050"
+                            FontSize="14"
+                            Padding="6,4"
+                            VerticalAlignment="Top"/>
+                </Grid>
+            </Border>
+
+            <!-- Device count badge -->
+            <Border Grid.Row="1" Padding="20,10,20,4">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Border Background="#0D1F0D"
+                            BorderBrush="#1A3A1A" BorderThickness="1"
+                            CornerRadius="20" Padding="10,4">
+                        <TextBlock Text="{Binding OnlineCount, StringFormat='🟢 {0} online'}"
+                                   FontSize="11" Foreground="#00E676" FontWeight="SemiBold"/>
+                    </Border>
+                    <TextBlock Text="Select where to fire this command"
+                               FontSize="12" Foreground="#505050"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Device list -->
+            <ScrollViewer Grid.Row="2" Padding="12,4,12,4">
+                <StackPanel Spacing="6">
+
+                    <!-- Empty state -->
+                    <Border IsVisible="{Binding HasNoDevices}"
+                            Padding="20,32" HorizontalAlignment="Center">
+                        <StackPanel Spacing="8" HorizontalAlignment="Center">
+                            <TextBlock Text="📡" FontSize="40" HorizontalAlignment="Center"/>
+                            <TextBlock Text="No online devices found"
+                                       FontSize="13" Foreground="#404040"
+                                       HorizontalAlignment="Center"/>
+                            <TextBlock Text="Make sure Tailscale is running on your peers"
+                                       FontSize="11" Foreground="#303030"
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Device items -->
+                    <ItemsControl ItemsSource="{Binding OnlineDevices}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="m:Device">
+                                <Button Background="Transparent"
+                                        Padding="0" Margin="0,0,0,4"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Tag="{Binding}"
+                                        Click="OnDeviceClicked">
+                                    <Border Background="#141414"
+                                            BorderBrush="#202020" BorderThickness="1"
+                                            CornerRadius="10" Padding="14,12"
+                                            Classes="DeviceItem">
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <!-- Icon -->
+                                            <Border Grid.Column="0"
+                                                    Width="44" Height="44"
+                                                    Background="#0D1A0D"
+                                                    BorderBrush="#1A2F1A" BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="{Binding DeviceIcon}"
+                                                           FontSize="22"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"/>
+                                            </Border>
+
+                                            <!-- Info -->
+                                            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="13" FontWeight="SemiBold"
+                                                               Foreground="#EFEFEF"/>
+                                                    <Border Background="#0E1E0E"
+                                                            BorderBrush="#1A3A1A" BorderThickness="1"
+                                                            CornerRadius="4" Padding="5,1"
+                                                            IsVisible="{Binding IsSelf}">
+                                                        <TextBlock Text="this device"
+                                                                   FontSize="10" Foreground="#00E676"/>
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock FontSize="11" Foreground="#505050">
+                                                    <Run Text="{Binding Os}"/>
+                                                    <Run Text=" · "/>
+                                                    <Run Text="{Binding IpAddress}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <!-- Arrow -->
+                                            <TextBlock Grid.Column="2"
+                                                       Text="›"
+                                                       FontSize="18" Foreground="#303030"
+                                                       VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Footer -->
+            <Border Grid.Row="3"
+                    Background="#0A0A0A"
+                    BorderBrush="#1A1A1A" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,12,12"
+                    Padding="20,12">
+                <TextBlock Text="Offline devices are automatically hidden"
+                           FontSize="11" Foreground="#303030"
+                           HorizontalAlignment="Center"/>
+            </Border>
+        </Grid>
+    </Border>
+
+    <Window.Styles>
+        <Style Selector="Border.DeviceItem">
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Background" Duration="0:0:0.15"/>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Button:pointerover Border.DeviceItem">
+            <Setter Property="Background" Value="#1A2A1A"/>
+            <Setter Property="BorderBrush" Value="#253525"/>
+        </Style>
+        <Style Selector="Button:pressed Border.DeviceItem">
+            <Setter Property="Background" Value="#0D1A0D"/>
+        </Style>
+    </Window.Styles>
+</Window>

@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="EchoLink.Views.ToastWindow"
+        Title=""
+        Width="320" Height="64"
+        WindowStartupLocation="Manual"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        SystemDecorations="None">
+
+    <Border Background="#1A1A1A"
+            BorderBrush="#2A3A2A" BorderThickness="1"
+            CornerRadius="10"
+            BoxShadow="0 4 24 0 #80000000"
+            Padding="14,10">
+        <Grid ColumnDefinitions="Auto,*">
+            <TextBlock Grid.Column="0"
+                       x:Name="IconText"
+                       FontSize="18"
+                       VerticalAlignment="Center"
+                       Margin="0,0,10,0"/>
+            <TextBlock Grid.Column="1"
+                       x:Name="MessageText"
+                       FontSize="13"
+                       Foreground="#EFEFEF"
+                       VerticalAlignment="Center"
+                       TextWrapping="Wrap"/>
+        </Grid>
+    </Border>
+</Window>
