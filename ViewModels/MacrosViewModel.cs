@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -32,22 +35,19 @@ public partial class MacrosViewModel : ViewModelBase
     public ObservableCollection<Device> OnlineDevices { get; } = new();
     public IReadOnlyList<string> OsOptions { get; } = ["All", "Windows", "Linux"];
 
-    // ── UI callback injected by the View ─────────────────────────────────
-    /// <summary>
-    /// Set by MacrosView.axaml.cs; opens the target-device modal and returns
-    /// the device the user picked, or null if cancelled.
-    /// </summary>
-    public Func<MacroButton, Task<Device?>>? ShowTargetModalAsync { get; set; }
+    // ── Dialog / Overlay State ───────────────────────────────────────────
+    [ObservableProperty] private bool _isTargetDialogVisible;
+    [ObservableProperty] private string _dialogMacroName = string.Empty;
+    public ObservableCollection<Device> TargetDialogDevices { get; } = new();
+    private TaskCompletionSource<Device?>? _targetSelectionTcs;
 
-    /// <summary>
-    /// Set by MacrosView.axaml.cs; opens a blocking error dialog (like a message box).
-    /// </summary>
-    public Func<string, string, Task>? ShowErrorDialogAsync { get; set; }
+    [ObservableProperty] private bool _isErrorDialogVisible;
+    [ObservableProperty] private string _errorDialogTitle = string.Empty;
+    [ObservableProperty] private string _errorDialogMessage = string.Empty;
 
-    /// <summary>
-    /// Set by MacrosView.axaml.cs; shows a brief toast notification.
-    /// </summary>
-    public Action<string, string>? ShowToast { get; set; }
+    [ObservableProperty] private bool _isToastVisible;
+    [ObservableProperty] private string _toastMessage = string.Empty;
+    [ObservableProperty] private string _toastIcon = string.Empty;
 
     public MacrosViewModel()
     {
@@ -147,28 +147,59 @@ public partial class MacrosViewModel : ViewModelBase
         _ = SyncToMeshAsync();
     }
 
+    // ── Dialog Commands ──────────────────────────────────────────────────
+
+    [RelayCommand]
+    private void CancelTargetSelection()
+    {
+        IsTargetDialogVisible = false;
+        _targetSelectionTcs?.TrySetResult(null);
+    }
+
+    [RelayCommand]
+    private void SelectTarget(Device device)
+    {
+        IsTargetDialogVisible = false;
+        _targetSelectionTcs?.TrySetResult(device);
+    }
+
+    [RelayCommand]
+    private void CloseErrorDialog()
+    {
+        IsErrorDialogVisible = false;
+    }
+
+    private void ShowToastInternal(string message, string icon)
+    {
+        ToastMessage = message;
+        ToastIcon = icon;
+        IsToastVisible = true;
+        
+        // Auto-hide toast
+        _ = Task.Delay(3000).ContinueWith(_ =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => IsToastVisible = false);
+        });
+    }
+
     // ── Execution ────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Called when the user clicks ▶ Run on any macro tile.
-    /// Step 1: show target-selection modal (online devices only).
-    /// Step 2: pre-flight OS check.
-    /// Step 3: execute or reject.
-    /// </summary>
     [RelayCommand]
     private async Task ExecuteMacroAsync(MacroButton macro)
     {
         if (macro is null || IsExecuting) return;
-        if (ShowTargetModalAsync is null)
-        {
-            _log.Warning("[Macros] ShowTargetModalAsync not wired up.");
-            return;
-        }
 
         // ── Step 1: refresh device list, then show modal ──────────────────
         await LoadDevicesAsync();
+        
+        TargetDialogDevices.Clear();
+        foreach (var d in OnlineDevices) TargetDialogDevices.Add(d);
+        
+        DialogMacroName = macro.Name;
+        _targetSelectionTcs = new TaskCompletionSource<Device?>();
+        IsTargetDialogVisible = true;
 
-        Device? target = await ShowTargetModalAsync(macro);
+        Device? target = await _targetSelectionTcs.Task;
         if (target is null)
         {
             StatusText = "Cancelled.";
@@ -188,7 +219,7 @@ public partial class MacrosViewModel : ViewModelBase
                 await RunLocallyAsync(macro.Command);
                 string msg = $"Command sent to {target.Name}";
                 StatusText = $"✔ {msg}";
-                ShowToast?.Invoke(msg, "⚡");
+                ShowToastInternal(msg, "⚡");
                 _log.Info($"[Macros] Fired '{macro.Name}' locally.");
                 return;
             }
@@ -208,17 +239,16 @@ public partial class MacrosViewModel : ViewModelBase
             {
                 string msg = $"Command sent to {target.Name}";
                 StatusText = $"✔ {msg}";
-                ShowToast?.Invoke(msg, "⚡");
+                ShowToastInternal(msg, "⚡");
                 _log.Info($"[Macros] Fired '{macro.Name}' → {target.Name}");
             }
             else
             {
                 string err = result.Error ?? "Unknown error";
                 StatusText = $"⚠ {err}";
-                if (ShowErrorDialogAsync is not null)
-                    await ShowErrorDialogAsync("OS Mismatch – Cannot Execute", err);
-                else
-                    _log.Warning($"[Macros] Blocked: {err}");
+                ErrorDialogTitle = "OS Mismatch – Cannot Execute";
+                ErrorDialogMessage = err;
+                IsErrorDialogVisible = true;
             }
         }
         catch (Exception ex)
@@ -226,6 +256,9 @@ public partial class MacrosViewModel : ViewModelBase
             string err = $"'{macro.Name}': {ex.Message}";
             StatusText = $"❌ {err}";
             _log.Error($"[Macros] Execute failed: {ex.Message}");
+            ErrorDialogTitle = "Execution Failed";
+            ErrorDialogMessage = ex.Message;
+            IsErrorDialogVisible = true;
         }
         finally
         {
@@ -267,7 +300,7 @@ public partial class MacrosViewModel : ViewModelBase
             await MacroService.Instance.SyncToMeshAsync([.. Macros], OnlineDevices);
             int peerCount = OnlineDevices.Count(d => d.IsOnline && !d.IsSelf);
             StatusText = $"✔ Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}";
-            ShowToast?.Invoke($"Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}", "⇄");
+            ShowToastInternal($"Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}", "⇄");
         }
         catch (Exception ex)
         {

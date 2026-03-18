@@ -163,7 +163,8 @@ public class OsProbeService
             // Linux / macOS — wrap in bash so aliases, built-ins, $PATH, pipes work
             // Escape any single quotes in the command before embedding in shell
             string escaped = command.Replace("'", "'\\''");
-            return $"bash -c '{escaped}'";
+            string env = "export DISPLAY=:0; export WAYLAND_DISPLAY=wayland-0; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus;";
+            return $"bash -c '{env} {escaped}'";
         }
     }
 
