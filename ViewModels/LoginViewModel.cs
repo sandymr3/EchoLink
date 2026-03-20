@@ -25,53 +25,61 @@ public partial class LoginViewModel : ViewModelBase
     {
         if (IsLoading) return;
         IsLoading = true;
-        StatusText = "Starting login...";
+        StatusText = "Starting Google login...";
 
         _loginCts = new CancellationTokenSource();
         var ct = _loginCts.Token;
 
         try
         {
-            TailscaleService.Instance.ResetRunningState();
+            EchoLink.Services.Auth.AuthService authService;
 
             if (OperatingSystem.IsAndroid())
             {
-                // Set up a background task to poll the native state and show errors
-                _ = Task.Run(async () =>
-                {
-                    while (!ct.IsCancellationRequested && IsLoading)
-                    {
-                        var state = await TailscaleService.Instance.GetBackendStateAsync(ct);
-                        if (state == "Error")
-                        {
-                            var errorMsg = TailscaleService.Instance.GetAndroidNativeLastError();
-                            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                            {
-                                StatusText = $"Native Bridge Error:\n{errorMsg}";
-                                _log.Error($"[Login] Native error: {errorMsg}");
-                                // Don't cancel immediately so user can read it, but stop loading
-                            });
-                        }
-                        else
-                        {
-                            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                            {
-                                if (StatusText.StartsWith("Starting") || StatusText.StartsWith("State:"))
-                                    StatusText = $"State: {state}... waiting for URL";
-                            });
-                        }
-                        await Task.Delay(1000, ct);
-                    }
-                }, ct);
+                // Uses the AndroidBrowser instance registered in MainActivity.cs
+                string redirectUri = "https://echo-link.app/oidc/callback";
+                
+                if (App.AndroidBrowserInstance == null)
+                    throw new InvalidOperationException("AndroidBrowserInstance is not registered.");
+                    
+                authService = new EchoLink.Services.Auth.AuthService(App.AndroidBrowserInstance, redirectUri);
+            }
+            else
+            {
+                // Uses the Custom Loopback Listener on Port 5000 for Desktop
+                string redirectUri = "http://127.0.0.1:5000/";
+                authService = new EchoLink.Services.Auth.AuthService(new EchoLink.Services.Auth.SystemBrowser(5000), redirectUri);
             }
 
-            await TailscaleService.Instance.LoginAsync(authUrl =>
+            // 1. Trigger the browser popup / Custom Tab and get the JWT
+            var jwt = await authService.LoginAsync();
+
+            if (string.IsNullOrEmpty(jwt))
             {
-                _log.Info($"[Login] Auth URL received: {authUrl}");
-                OpenBrowser(authUrl);
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    StatusText = "Browser opened — complete Google sign-in...");
-            }, ct);
+                StatusText = "Login failed or was cancelled.";
+                return;
+            }
+
+            StatusText = "Authenticating with EchoLink Control Plane...";
+            _log.Info("[Login] Google JWT received successfully.");
+
+            // 2. Exchange JWT with the Go Middleware for a Tailscale Pre-Auth Key
+            var preAuthKey = await EchoLink.Services.Auth.MiddlewareClient.Instance.ExchangeJwtForPreAuthKeyAsync(jwt);
+            
+            if (string.IsNullOrEmpty(preAuthKey))
+            {
+                StatusText = "Failed to obtain Pre-Auth Key from Middleware.";
+                return;
+            }
+
+            StatusText = "Connecting to the Tailnet mesh...";
+            _log.Info("[Login] Pre-Auth Key obtained, starting Tailscale node...");
+
+            // 3. TODO: Start Tailscale using the obtained Pre-Auth Key.
+            // await TailscaleService.Instance.StartDaemonAsync(preAuthKey, ct);
+            
+            // Simulating connection success for now
+            await Task.Delay(1500, ct);
 
             _log.Info("[Login] 'tailscale up' succeeded — transitioning to main window.");
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());

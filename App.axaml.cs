@@ -14,6 +14,9 @@ namespace EchoLink;
 
 public partial class App : Application
 {
+    // Global reference for the Android custom browser interceptor
+    public static Duende.IdentityModel.OidcClient.Browser.IBrowser? AndroidBrowserInstance { get; set; }
+
     private readonly LoggingService _log = LoggingService.Instance;
 
     public override void Initialize()

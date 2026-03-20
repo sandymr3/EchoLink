@@ -30,6 +30,8 @@
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
     <PackageReference Include="Concentus" Version="1.0.6" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Duende.IdentityModel.OidcClient" Version="7.1.0" />
+    <PackageReference Include="Duende.IdentityModel.OidcClient.Extensions" Version="7.1.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
   </ItemGroup>
