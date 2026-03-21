@@ -88,7 +88,7 @@ typedef struct { void *data; GoInt len; GoInt cap; } GoSlice;
 extern "C" {
 #endif
 
-extern GoInt StartEchoLinkNode(char* configDir, char* authKey, char* hostname, char* localIp);
+extern GoInt StartEchoLinkNode(char* configDir, char* authKey, char* hostname, char* localIp, int isEphemeral);
 extern char* GetLastErrorMsg(void);
 extern void SetAudioTargetHost(char* host);
 extern char* GetPeerListJson(void);

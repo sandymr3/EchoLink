@@ -80,3 +80,5 @@ Desktop.ini
 *.md
 
 Echolink-middleware
+headscale_docs
+secrets.json

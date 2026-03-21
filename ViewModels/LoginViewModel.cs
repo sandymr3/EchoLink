@@ -14,11 +14,69 @@ public partial class LoginViewModel : ViewModelBase
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _statusText = "Sign in to connect to EchoLink mesh";
+    
+    [ObservableProperty] private bool _isGuestMode;
+    [ObservableProperty] private string _guestPin = "";
 
     /// <summary>
     /// Raised on the UI thread when authentication completes successfully.
     /// </summary>
     public event Action? LoginSucceeded;
+
+    [RelayCommand]
+    private void ToggleGuestMode()
+    {
+        IsGuestMode = !IsGuestMode;
+        StatusText = IsGuestMode ? "Enter PIN to join temporarily" : "Sign in to connect to EchoLink mesh";
+        GuestPin = "";
+    }
+
+    [RelayCommand]
+    private async Task ConnectAsGuestAsync()
+    {
+        if (IsLoading || string.IsNullOrWhiteSpace(GuestPin)) return;
+        
+        IsLoading = true;
+        StatusText = "Validating PIN...";
+        
+        _loginCts = new CancellationTokenSource();
+        var ct = _loginCts.Token;
+
+        try
+        {
+            var preAuthKey = await EchoLink.Services.Auth.MiddlewareClient.Instance.ClaimGuestPinAsync(GuestPin);
+            
+            if (string.IsNullOrEmpty(preAuthKey))
+            {
+                StatusText = "Invalid or expired PIN.";
+                return;
+            }
+
+            StatusText = "Connecting to Tailnet as Guest...";
+            _log.Info("[Login] Guest PIN accepted. Starting ephemeral Tailscale node...");
+
+            // Start Tailscale as Ephemeral node
+            await TailscaleService.Instance.StartDaemonAsync(preAuthKey, true, ct);
+            
+            await Task.Delay(1500, ct);
+
+            _log.Info("[Login] Ephemeral node started.");
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Connection cancelled.";
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[Login] Guest connection failed: {ex.Message}");
+            StatusText = $"Connection failed: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
 
     [RelayCommand]
     private async Task LoginWithGoogleAsync()
@@ -75,11 +133,9 @@ public partial class LoginViewModel : ViewModelBase
             StatusText = "Connecting to the Tailnet mesh...";
             _log.Info("[Login] Pre-Auth Key obtained, starting Tailscale node...");
 
-            // 3. TODO: Start Tailscale using the obtained Pre-Auth Key.
-            // await TailscaleService.Instance.StartDaemonAsync(preAuthKey, ct);
-            
-            // Simulating connection success for now
-            await Task.Delay(1500, ct);
+            // 3. Start Tailscale using the obtained Pre-Auth Key.
+            // Ecosystem node (not ephemeral) for standard login
+            await TailscaleService.Instance.StartDaemonAsync(preAuthKey, false, ct);
 
             _log.Info("[Login] 'tailscale up' succeeded — transitioning to main window.");
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());

@@ -48,7 +48,7 @@ var (
 )
 
 //export StartEchoLinkNode
-func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, localIp *C.char) int {
+func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, localIp *C.char, isEphemeral C.int) int {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -63,12 +63,13 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 	host := C.GoString(hostname)
 	key := C.GoString(authKey)
 	ipStr := C.GoString(localIp)
+	ephemeral := isEphemeral != 0
 
 	if host == "" {
 		host = "echolink-android"
 	}
 
-	log.Printf("[Go] Starting node: Host=%s, Dir=%s, LocalIP=%s", host, conf, ipStr)
+	log.Printf("[Go] Starting node: Host=%s, Dir=%s, LocalIP=%s, Ephemeral=%v", host, conf, ipStr, ephemeral)
 
 	// Dynamically register the interface getter with the IP C# gave us
 	netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
@@ -99,7 +100,7 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 		Hostname:   host,
 		AuthKey:    key,
 		ControlURL: "https://echo-link.app",
-		Ephemeral:  false,
+		Ephemeral:  ephemeral,
 		Logf: func(format string, args ...any) {
 			msg := fmt.Sprintf(format, args...)
 			if strings.Contains(msg, "https://") {

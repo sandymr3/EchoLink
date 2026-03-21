@@ -76,11 +76,18 @@ public class TailscaleService
         }
     }
 
-    public void StartDaemon()
+    public bool IsEphemeralSession { get; private set; }
+
+    public async Task StartDaemonAsync(string authKey, bool isEphemeral, CancellationToken ct = default)
     {
+        IsEphemeralSession = isEphemeral;
+
         if (OperatingSystem.IsAndroid())
         {
-            _log.Info("[Tailscale] Android detected. Daemon is managed by EchoLinkForegroundService.");
+            _log.Info($"[Tailscale] Android detected. Requesting daemon start via native bridge. Ephemeral={isEphemeral}");
+            string userConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string tailscaleDir = Path.Combine(userConfigDir, "EchoLink", "Tailscale");
+            NativeBridge?.StartNode(tailscaleDir, authKey, "android-device", "127.0.0.1", isEphemeral);
             return;
         }
 
@@ -103,9 +110,16 @@ public class TailscaleService
 
         _log.Info($"[Tailscale] Daemon binary found: {binaryPath}");
 
-        // 2. Set up a folder for Tailscale to save its data safely in the user's home folder
-        string userConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _tailscaleDir = Path.Combine(userConfigDir, "EchoLink", "Tailscale");
+        // 2. Set up a folder for Tailscale to save its data
+        string userConfigDirRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (isEphemeral)
+        {
+            _tailscaleDir = Path.Combine(Path.GetTempPath(), "EchoLink", "Tailscale_Temp_" + Guid.NewGuid().ToString("N"));
+        }
+        else
+        {
+            _tailscaleDir = Path.Combine(userConfigDirRoot, "EchoLink", "Tailscale");
+        }
         Directory.CreateDirectory(_tailscaleDir);
         _log.Info($"[Tailscale] Data dir: {_tailscaleDir}");
 
@@ -173,6 +187,23 @@ public class TailscaleService
                     _log.Error($"[Tailscale] !!! Daemon exited unexpectedly (exit code {code}) !!!");
                 }
             };
+
+            // Authenticate with the new key via the CLI
+            string cliPathCommand = CliPath();
+            string unattended = OperatingSystem.IsWindows() ? " --unattended" : "";
+            string upArgs = PrefixSocketArg($"up --login-server={HeadscaleServer} --authkey=\"{authKey}\" --force-reauth{unattended}");
+            
+            var upPsi = new ProcessStartInfo
+            {
+                FileName = cliPathCommand,
+                Arguments = upArgs,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            
+            _log.Info($"[Tailscale] Running up command: {upPsi.FileName} {upPsi.Arguments}");
+            var upProcess = Process.Start(upPsi);
+            if (upProcess != null) await upProcess.WaitForExitAsync(ct);
 
             _ = Task.Run(async () =>
             {

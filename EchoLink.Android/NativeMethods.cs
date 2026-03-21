@@ -8,7 +8,7 @@ public static class NativeMethods
     private const string LibraryName = "echolink"; // libecholink.so
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    public static extern int StartEchoLinkNode(string configDir, string authKey, string hostname, string localIp);
+    public static extern int StartEchoLinkNode(string configDir, string authKey, string hostname, string localIp, int isEphemeral);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void StopEchoLinkNode();

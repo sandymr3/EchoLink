@@ -8,7 +8,7 @@ public interface INativeMeshBridge
     string GetPeerListJson();
     string? GetLastErrorMsg();
     void SetAudioTargetHost(string host);
-    void StartNode(string configDir, string authKey, string hostname, string localIp);
+    void StartNode(string configDir, string authKey, string hostname, string localIp, bool isEphemeral);
     void StopNode();
     void LogoutNode();
 }

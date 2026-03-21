@@ -54,21 +54,80 @@
                              Foreground="#00E676"
                              Background="#2D2D2D"/>
 
-                <!-- Login button -->
-                <Button Command="{Binding LoginWithGoogleCommand}"
-                        IsEnabled="{Binding !IsLoading}"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Center"
-                        Padding="0,14"
-                        CornerRadius="8"
-                        Background="#00E676"
-                        Foreground="#121212"
-                        FontSize="15"
-                        FontWeight="Bold">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Text="Log In with Google" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                <!-- Ecosystem / Standard Mode -->
+                <StackPanel Spacing="16" IsVisible="{Binding !IsGuestMode}">
+                    <Button Command="{Binding LoginWithGoogleCommand}"
+                            IsEnabled="{Binding !IsLoading}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Padding="0,14"
+                            CornerRadius="8"
+                            Background="#00E676"
+                            Foreground="#121212"
+                            FontSize="15"
+                            FontWeight="Bold">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="Log In with Google" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Button Command="{Binding ToggleGuestModeCommand}"
+                            IsEnabled="{Binding !IsLoading}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Padding="0,14"
+                            CornerRadius="8"
+                            Background="#2D2D2D"
+                            Foreground="#FFFFFF"
+                            FontSize="15"
+                            FontWeight="SemiBold">
+                        <TextBlock Text="Join as Guest" VerticalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
+
+                <!-- Guest Mode -->
+                <StackPanel Spacing="16" IsVisible="{Binding IsGuestMode}">
+                    <TextBlock Text="Enter a 6-digit PIN provided by the host device to connect temporarily."
+                               FontSize="12" Foreground="#B3B3B3" TextWrapping="Wrap" TextAlignment="Center"/>
+
+                    <TextBox Text="{Binding GuestPin}"
+                             Watermark="PIN Code"
+                             IsEnabled="{Binding !IsLoading}"
+                             MaxLength="6"
+                             TextAlignment="Center"
+                             FontSize="24"
+                             LetterSpacing="4"
+                             Padding="10"
+                             Margin="0,8"
+                             CornerRadius="8"
+                             Background="#1E1E1E"
+                             Foreground="#FFFFFF"/>
+
+                    <Button Command="{Binding ConnectAsGuestCommand}"
+                            IsEnabled="{Binding !IsLoading}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Padding="0,14"
+                            CornerRadius="8"
+                            Background="#00E676"
+                            Foreground="#121212"
+                            FontSize="15"
+                            FontWeight="Bold">
+                        <TextBlock Text="Connect" VerticalAlignment="Center"/>
+                    </Button>
+
+                    <Button Command="{Binding ToggleGuestModeCommand}"
+                            IsEnabled="{Binding !IsLoading}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Padding="0,14"
+                            CornerRadius="8"
+                            Background="Transparent"
+                            Foreground="#B3B3B3"
+                            FontSize="14">
+                        <TextBlock Text="Back to Log In" VerticalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
 
                 <!-- Cancel button — only visible while loading -->
                 <Button Command="{Binding CancelCommand}"

@@ -38,10 +38,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
             NativeMethods.SetAudioTargetHost(host);
     }
     
-    public void StartNode(string configDir, string authKey, string hostname, string localIp)
+    public void StartNode(string configDir, string authKey, string hostname, string localIp, bool isEphemeral)
     {
         if (_libraryLoaded)
-            NativeMethods.StartEchoLinkNode(configDir, authKey, hostname, localIp);
+            NativeMethods.StartEchoLinkNode(configDir, authKey, hostname, localIp, isEphemeral ? 1 : 0);
     }
 
     public void StopNode()

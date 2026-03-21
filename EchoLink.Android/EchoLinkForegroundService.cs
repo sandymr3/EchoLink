@@ -101,8 +101,13 @@ public class EchoLinkForegroundService : Service
                         }
                     }
 
-                    global::Android.Util.Log.Info("EchoLinkService", $"Calling StartEchoLinkNode with dir: {configDir}, Local IP: {localIp}");
-                    int result = NativeMethods.StartEchoLinkNode(configDir, "", global::Android.OS.Build.Model ?? "Android", localIp);
+                    // Read parameters passed from TailscaleService (if any)
+                    string intentAuthKey = intent?.GetStringExtra("AuthKey") ?? "";
+                    bool intentIsEphemeral = intent?.GetBooleanExtra("IsEphemeral", false) ?? false;
+                    int isEphemeralInt = intentIsEphemeral ? 1 : 0;
+
+                    global::Android.Util.Log.Info("EchoLinkService", $"Calling StartEchoLinkNode with dir: {configDir}, Local IP: {localIp}, Ephemeral: {intentIsEphemeral}");
+                    int result = NativeMethods.StartEchoLinkNode(configDir, intentAuthKey, global::Android.OS.Build.Model ?? "Android", localIp, isEphemeralInt);
                     global::Android.Util.Log.Info("EchoLinkService", $"StartEchoLinkNode returned: {result}");
                 }
                 catch (Exception ex)

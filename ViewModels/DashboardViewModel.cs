@@ -18,12 +18,45 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private bool _isRefreshing;
 
+    [ObservableProperty] private string _guestInvitePin = "";
+    [ObservableProperty] private bool _isInviteVisible;
+    [ObservableProperty] private string _inviteStatusText = "";
+
     public ObservableCollection<Device> Devices { get; } = new();
 
     public DashboardViewModel()
     {
         _log.Info("Dashboard initialized.");
         _ = RefreshNetworkAsync();
+    }
+
+    [RelayCommand]
+    private async Task GenerateGuestInviteAsync()
+    {
+        IsInviteVisible = true;
+        InviteStatusText = "Generating PIN...";
+        GuestInvitePin = "";
+
+        var (pin, expiresIn) = await EchoLink.Services.Auth.MiddlewareClient.Instance.GenerateGuestPinAsync();
+        
+        if (!string.IsNullOrEmpty(pin))
+        {
+            GuestInvitePin = pin;
+            InviteStatusText = $"Valid for {expiresIn} minutes";
+            _log.Info($"[Dashboard] Generated Guest PIN: {pin}");
+        }
+        else
+        {
+            InviteStatusText = "Failed to generate PIN.";
+            _log.Warning("[Dashboard] Failed to generate guest PIN.");
+        }
+    }
+
+    [RelayCommand]
+    private void CloseGuestInvite()
+    {
+        IsInviteVisible = false;
+        GuestInvitePin = "";
     }
 
     [RelayCommand]

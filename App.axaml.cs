@@ -26,8 +26,6 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // Start the tailscale daemon/service
-        TailscaleService.Instance.StartDaemon();
         DisableAvaloniaDataAnnotationValidation();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -41,7 +39,15 @@ public partial class App : Application
                 await AudioStreamingService.Instance.StopAllAsync();
                 AudioStreamingService.Instance.StopServer();
                 RemoteControlService.Instance.StopServer();
-                TailscaleService.Instance.StopDaemon();
+                
+                if (TailscaleService.Instance.IsEphemeralSession)
+                {
+                    await TailscaleService.Instance.LogoutAsync();
+                }
+                else
+                {
+                    TailscaleService.Instance.StopDaemon();
+                }
             };
 
             // Check auth state asynchronously, then show the right window
