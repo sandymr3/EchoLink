@@ -15,23 +15,19 @@ public static class NativeMethods
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     [return: MarshalAs(UnmanagedType.LPStr)]
-    public static extern string GetBackendState();
+    public static extern IntPtr GetBackendState();
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
-    public static extern string GetTailscaleIp();
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr GetTailscaleIp();
     
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
-    public static extern string GetLoginUrl();
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr GetLoginUrl();
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
-    public static extern string GetPeerListJson();
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr GetPeerListJson();
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
-    public static extern string GetLastErrorMsg();
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr GetLastErrorMsg();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern void SetAudioTargetHost(string host);

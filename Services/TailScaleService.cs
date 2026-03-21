@@ -23,8 +23,8 @@ public class TailscaleService
     private string _socketPath = "";
     private readonly LoggingService _log = LoggingService.Instance;
 
-    private const string HeadscaleServer = "https://echo-link.app";
-    private const string HeadscaleHost = "echo-link.app";
+    private const string HeadscaleServer = "https://control.echo-link.app";
+    private const string HeadscaleHost = "control.echo-link.app";
 
     public INativeMeshBridge? NativeBridge { get; set; }
 
@@ -87,7 +87,37 @@ public class TailscaleService
             _log.Info($"[Tailscale] Android detected. Requesting daemon start via native bridge. Ephemeral={isEphemeral}");
             string userConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string tailscaleDir = Path.Combine(userConfigDir, "EchoLink", "Tailscale");
+            
+            // Start the node
             NativeBridge?.StartNode(tailscaleDir, authKey, "android-device", "127.0.0.1", isEphemeral);
+            
+            // WAIT for the node to reach a definitive state
+            _log.Info("[Tailscale] Waiting for Android node to reach Running or NeedsLogin state...");
+            for (int i = 0; i < 30; i++) // 15 second timeout
+            {
+                var state = NativeBridge?.GetBackendState();
+                if (state == "Running")
+                {
+                    _log.Info("[Tailscale] Android node started successfully (Running).");
+                    return;
+                }
+                if (state == "NeedsLogin")
+                {
+                    // If we provided an auth key and it's still asking for login, 
+                    // it means the key was likely rejected or ignored.
+                    _log.Warning("[Tailscale] Android node reached NeedsLogin. Auth key may have been invalid.");
+                    return; 
+                }
+                if (state == "Error")
+                {
+                    var err = NativeBridge?.GetLastErrorMsg();
+                    throw new Exception($"Native node failed to start: {err}");
+                }
+                
+                await Task.Delay(500, ct);
+            }
+            
+            _log.Warning("[Tailscale] Timeout waiting for Android node state transition.");
             return;
         }
 
@@ -652,7 +682,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
             int spaceIdx = part.IndexOf(' ');
             if (spaceIdx > 0) part = part[..spaceIdx];
 
-            if (part.Contains("echo-link.app/a/") || part.Contains("echo-link.app/register/")) // Ensure it's an auth URL, not just the server URL
+            if (part.Contains("control.echo-link.app/a/") || part.Contains("control.echo-link.app/register/")) // Ensure it's an auth URL, not just the server URL
             {
                 urlOpened = true;
                 onAuthUrl(part);
@@ -669,7 +699,7 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
             int spaceIdx = part.IndexOf(' ');
             if (spaceIdx > 0) part = part[..spaceIdx];
 
-            if (part.Contains("echo-link.app/a/") || part.Contains("echo-link.app/register/"))
+            if (part.Contains("control.echo-link.app/a/") || part.Contains("control.echo-link.app/register/"))
             {
                 urlOpened = true;
                 onAuthUrl(part);

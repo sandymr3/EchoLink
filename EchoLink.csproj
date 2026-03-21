@@ -13,13 +13,11 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
-    <AvaloniaResource Include="Styles\**" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.12" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Svg.Skia" Version="11.3.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
     <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
@@ -34,8 +32,6 @@
     <PackageReference Include="Duende.IdentityModel.OidcClient" Version="7.1.0" />
     <PackageReference Include="Duende.IdentityModel.OidcClient.Extensions" Version="7.1.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="Net.Codecrete.QrCodeGenerator" Version="2.1.0" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
-    <PackageReference Include="ZXing.Net.Bindings.SkiaSharp" Version="0.16.22" />
   </ItemGroup>
 </Project>

@@ -25,6 +25,12 @@ extern const char *_GoStringPtr(_GoString_ s);
 
 #include <stdlib.h>
 #include <string.h>
+#include <android/log.h>
+
+// Helper to log to Android Logcat
+static inline void android_log(const char* msg) {
+    __android_log_print(ANDROID_LOG_INFO, "EchoLink-Go", "%s", msg);
+}
 
 #line 1 "cgo-generated-wrapper"
 
@@ -89,14 +95,14 @@ extern "C" {
 #endif
 
 extern GoInt StartEchoLinkNode(char* configDir, char* authKey, char* hostname, char* localIp, int isEphemeral);
-extern char* GetLastErrorMsg(void);
-extern void SetAudioTargetHost(char* host);
-extern char* GetPeerListJson(void);
 extern char* GetBackendState(void);
 extern char* GetTailscaleIp(void);
 extern char* GetLoginUrl(void);
+extern char* GetLastErrorMsg(void);
 extern void LogoutNode(void);
+extern char* GetPeerListJson(void);
 extern void StopEchoLinkNode(void);
+extern void SetAudioTargetHost(char* host);
 
 #ifdef __cplusplus
 }

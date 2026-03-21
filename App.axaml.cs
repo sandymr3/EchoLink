@@ -16,6 +16,9 @@ public partial class App : Application
 {
     // Global reference for the Android custom browser interceptor
     public static Duende.IdentityModel.OidcClient.Browser.IBrowser? AndroidBrowserInstance { get; set; }
+    
+    // Global reference for Android Activity to allow bridge to start/stop services
+    public static object? AndroidActivityInstance { get; set; }
 
     private readonly LoggingService _log = LoggingService.Instance;
 

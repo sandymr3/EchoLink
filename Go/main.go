@@ -3,26 +3,26 @@ package main
 /*
 #include <stdlib.h>
 #include <string.h>
+#include <android/log.h>
+
+// Helper to log to Android Logcat
+static inline void android_log(const char* msg) {
+    __android_log_print(ANDROID_LOG_INFO, "EchoLink-Go", "%s", msg);
+}
 */
 import "C"
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"time"
+	"unsafe"
 
-	"github.com/armon/go-socks5"
-	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsnet"
@@ -37,11 +37,8 @@ func init() {
 
 var (
 	tsServer      *tsnet.Server
-	sshLn         net.Listener
-	audioMeshLn   net.PacketConn
-	audioLocalLn  net.PacketConn
 	mu            sync.Mutex
-	internalState string = "NotStarted"
+	internalState string = "Stopped"
 	lastAuthUrl   string = ""
 	lastErrorMsg  string = ""
 	audioTarget   string = ""
@@ -52,12 +49,16 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 	mu.Lock()
 	defer mu.Unlock()
 
+	log.Printf("[Go] StartEchoLinkNode called.")
+
 	if tsServer != nil {
+		log.Printf("[Go] Server instance already exists. Returning 0.")
 		return 0
 	}
 
 	internalState = "Starting"
 	lastErrorMsg = ""
+	lastAuthUrl = ""
 
 	conf := C.GoString(configDir)
 	host := C.GoString(hostname)
@@ -69,19 +70,23 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 		host = "echolink-android"
 	}
 
-	log.Printf("[Go] Starting node: Host=%s, Dir=%s, LocalIP=%s, Ephemeral=%v", host, conf, ipStr, ephemeral)
+	log.Printf("[Go] CONFIG: Host=%s, Dir=%s, LocalIP=%s, Ephemeral=%v, KeyLen=%d", host, conf, ipStr, ephemeral, len(key))
 
-	// Dynamically register the interface getter with the IP C# gave us
+	if err := os.MkdirAll(conf, 0755); err != nil {
+		log.Printf("[Go] CRITICAL: Failed to create config dir: %v", err)
+		lastErrorMsg = fmt.Sprintf("MkdirAll failed: %v", err)
+		internalState = "Error"
+		return -1
+	}
+
 	netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
 		var addrs []net.Addr
-
 		if ipStr != "" && ipStr != "127.0.0.1" {
 			parsedIp := net.ParseIP(ipStr)
 			if parsedIp != nil {
 				addrs = append(addrs, &net.IPNet{IP: parsedIp, Mask: net.CIDRMask(24, 32)})
 			}
 		}
-
 		return []netmon.Interface{
 			{
 				Interface: &net.Interface{Index: 1, Name: "csharp-bridge", Flags: net.FlagUp},
@@ -99,391 +104,50 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 		Dir:        conf,
 		Hostname:   host,
 		AuthKey:    key,
-		ControlURL: "https://echo-link.app",
+		ControlURL: "https://control.echo-link.app",
 		Ephemeral:  ephemeral,
 		Logf: func(format string, args ...any) {
 			msg := fmt.Sprintf(format, args...)
-			if strings.Contains(msg, "https://") {
+			if strings.Contains(msg, "https://") && strings.Contains(msg, "/a/") && internalState != "Running" {
 				idx := strings.Index(msg, "https://")
-				lastAuthUrl = msg[idx:]
+				urlPart := msg[idx:]
+				if spaceIdx := strings.Index(urlPart, " "); spaceIdx != -1 {
+					urlPart = urlPart[:spaceIdx]
+				}
+				lastAuthUrl = urlPart
 				internalState = "NeedsLogin"
+				log.Printf("[Go] AUTH REQUIRED: %s", lastAuthUrl)
 			}
-			log.Printf("[tsnet] %s", msg)
+			
+			// Send to Logcat
+			cmsg := C.CString(fmt.Sprintf("[tsnet] %s", msg))
+			C.android_log(cmsg)
+			C.free(unsafe.Pointer(cmsg))
 		},
 	}
 
 	go func() {
-		_, err := tsServer.Up(context.Background())
-		if err == nil {
-			// THE SMOKING GUN FIX: All services MUST run concurrently!
-			go startSftpServer()
-			go startPairingForwarder()
-			go startSocks5Proxy()
-			go startUdpAudioProxy()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
 
+		status, err := tsServer.Up(ctx)
+		if err == nil {
+			log.Printf("[Go] tsServer.Up() SUCCESS! IP: %v", status.TailscaleIPs)
 			internalState = "Running"
 		} else {
-			log.Printf("[Go] tsServer.Up error: %v", err)
+			log.Printf("[Go] tsServer.Up() FAILED: %v", err)
 			lastErrorMsg = fmt.Sprintf("tsnet.Up error: %v", err)
-			internalState = "Error"
+			if internalState != "NeedsLogin" {
+				internalState = "Error"
+			}
 		}
 	}()
 
 	return 1
 }
 
-//export GetLastErrorMsg
-func GetLastErrorMsg() *C.char {
-	return C.CString(lastErrorMsg)
-}
-
-//export SetAudioTargetHost
-func SetAudioTargetHost(host *C.char) {
-	mu.Lock()
-	defer mu.Unlock()
-	audioTarget = strings.TrimSpace(C.GoString(host))
-	log.Printf("[Go] Audio target set to: %s", audioTarget)
-}
-
-func startSocks5Proxy() {
-	conf := &socks5.Config{
-		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return tsServer.Dial(ctx, network, addr)
-		},
-	}
-
-	server, err := socks5.New(conf)
-	if err != nil {
-		log.Printf("[Go] Failed to initialize SOCKS5 proxy: %v", err)
-		return
-	}
-
-	log.Println("[Go] SOCKS5 proxy running on 127.0.0.1:1055 (C# -> Mesh bridge)")
-	if err := server.ListenAndServe("tcp", "127.0.0.1:1055"); err != nil {
-		log.Printf("[Go] SOCKS5 proxy crashed: %v", err)
-	}
-}
-
-func startPairingForwarder() {
-	ln, err := tsServer.Listen("tcp", ":44444")
-	if err != nil {
-		log.Printf("[Go] Failed to listen on mesh port 44444: %v", err)
-		return
-	}
-
-	log.Printf("[Go] Pairing Forwarder listening on mesh port 44444, routing to 127.0.0.1:44444")
-
-	for {
-		meshConn, err := ln.Accept()
-		if err != nil {
-			log.Printf("[Go] Pairing forwarder accept error: %v", err)
-			return
-		}
-
-		go func(c net.Conn) {
-			defer c.Close()
-			log.Printf("[Go] Received pairing connection from mesh: %s", c.RemoteAddr().String())
-
-			localConn, err := net.Dial("tcp", "127.0.0.1:44444")
-			if err != nil {
-				log.Printf("[Go] Failed to dial local C# pairing service: %v", err)
-				return
-			}
-			defer localConn.Close()
-
-			go io.Copy(c, localConn)
-			io.Copy(localConn, c)
-		}(meshConn)
-	}
-}
-
-func startUdpAudioProxy() {
-	meshLn, err := tsServer.ListenPacket("udp", ":4000")
-	if err != nil {
-		log.Printf("[Go] Failed to listen on mesh UDP :4000 for audio: %v", err)
-		return
-	}
-
-	localLn, err := net.ListenPacket("udp", "127.0.0.1:4002")
-	if err != nil {
-		log.Printf("[Go] Failed to listen on local UDP 127.0.0.1:4002 for audio uplink: %v", err)
-		meshLn.Close()
-		return
-	}
-
-	audioMeshLn = meshLn
-	audioLocalLn = localLn
-
-	log.Printf("[Go] UDP audio proxy active: mesh :4000 <-> local 127.0.0.1:4001/4002")
-
-	go func() {
-		localPlaybackAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 4001}
-		localPlaybackConn, err := net.DialUDP("udp", nil, localPlaybackAddr)
-		if err != nil {
-			log.Printf("[Go] Failed to dial local playback UDP 127.0.0.1:4001: %v", err)
-			return
-		}
-		defer localPlaybackConn.Close()
-
-		buf := make([]byte, 4096)
-		for {
-			n, _, err := meshLn.ReadFrom(buf)
-			if err != nil {
-				log.Printf("[Go] mesh audio read stopped: %v", err)
-				return
-			}
-
-			if n > 0 {
-				log.Printf("[Go] Received %d bytes of UDP audio from mesh.", n)
-				_, wErr := localPlaybackConn.Write(buf[:n])
-				if wErr != nil {
-					log.Printf("[Go] local playback write error: %v", wErr)
-				}
-			}
-		}
-	}()
-
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, _, err := localLn.ReadFrom(buf)
-			if err != nil {
-				log.Printf("[Go] local audio read stopped: %v", err)
-				return
-			}
-
-			mu.Lock()
-			target := audioTarget
-			mu.Unlock()
-
-			if target == "" {
-				continue
-			}
-
-			remoteConn, dialErr := tsServer.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", target, 4000))
-			if dialErr != nil {
-				log.Printf("[Go] audio uplink dial error to %s:4000: %v", target, dialErr)
-				continue
-			}
-
-			_, writeErr := remoteConn.Write(buf[:n])
-			if writeErr != nil {
-				log.Printf("[Go] audio uplink write error: %v", writeErr)
-			}
-			remoteConn.Close()
-		}
-	}()
-}
-
-func startSftpServer() {
-	mu.Lock()
-	if sshLn != nil {
-		mu.Unlock()
-		return
-	}
-	mu.Unlock()
-
-	ln, err := tsServer.Listen("tcp", ":2222")
-	if err != nil {
-		log.Printf("[Go] Failed to listen on :2222: %v", err)
-		return
-	}
-	sshLn = ln
-
-	config := &ssh.ServerConfig{
-		NoClientAuth: true,
-	}
-
-	// Load or generate a host key (REQUIRED for the SSH server to actually accept connections)
-	keyPath := tsServer.Dir + "/ssh_host_ed25519_key"
-	privateBytes, err := os.ReadFile(keyPath)
-	if err != nil {
-		log.Printf("[Go] Generating new host key at %s", keyPath)
-		// We use a dummy ed25519 key for the ephemeral server, or generate a real one.
-		// For simplicity in a c-shared lib without external keygen tools, we can generate a small RSA key
-		// or just use a statically compiled one for the internal tunnel since Tailscale provides the real security.
-
-		// To keep it simple and robust, let's use a quick RSA generation
-		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err == nil {
-			privateBytes = pem.EncodeToMemory(&pem.Block{
-				Type:  "RSA PRIVATE KEY",
-				Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-			})
-			os.WriteFile(keyPath, privateBytes, 0600)
-		}
-	}
-
-	private, err := ssh.ParsePrivateKey(privateBytes)
-	if err == nil {
-		config.AddHostKey(private)
-		log.Printf("[Go] Host key loaded successfully.")
-	} else {
-		log.Printf("[Go] CRITICAL: Failed to parse host key: %v. SSH will reject all connections!", err)
-	}
-
-	log.Printf("[Go] SFTP Server listening on :2222")
-
-	for {
-		conn, err := sshLn.Accept()
-		if err != nil {
-			return
-		}
-		go handleSshConn(conn, config)
-	}
-}
-
-func handleSshConn(nConn net.Conn, config *ssh.ServerConfig) {
-	_, chans, reqs, err := ssh.NewServerConn(nConn, config)
-	if err != nil {
-		return
-	}
-	go ssh.DiscardRequests(reqs)
-
-	for newChannel := range chans {
-		if newChannel.ChannelType() == "direct-tcpip" {
-			go handleDirectTcpIp(newChannel)
-			continue
-		}
-		if newChannel.ChannelType() != "session" {
-			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
-			continue
-		}
-		channel, requests, _ := newChannel.Accept()
-
-		go func(in <-chan *ssh.Request) {
-			for req := range in {
-				if req.Type == "subsystem" && string(req.Payload[4:]) == "sftp" {
-					req.Reply(true, nil)
-					// Use a real file-system backed server instead of InMemHandler, and set the starting directory to tailscale's writable dir
-					server, err := sftp.NewServer(channel, sftp.WithServerWorkingDirectory(tsServer.Dir))
-					if err == nil {
-						if err := server.Serve(); err != nil && err != io.EOF {
-							log.Print("[Go] SFTP error:", err)
-						}
-					} else {
-						log.Print("[Go] Failed to init SFTP server:", err)
-					}
-					return
-				}
-				req.Reply(false, nil)
-			}
-		}(requests)
-	}
-}
-
-type directTcpIpPayload struct {
-	DestAddr   string
-	DestPort   uint32
-	OriginAddr string
-	OriginPort uint32
-}
-
-func handleDirectTcpIp(newChannel ssh.NewChannel) {
-	var payload directTcpIpPayload
-	if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
-		newChannel.Reject(ssh.ConnectionFailed, "Could not parse payload")
-		return
-	}
-
-	dest := fmt.Sprintf("%s:%d", payload.DestAddr, payload.DestPort)
-	conn, err := net.Dial("tcp", dest)
-	if err != nil {
-		newChannel.Reject(ssh.ConnectionFailed, err.Error())
-		return
-	}
-
-	channel, requests, err := newChannel.Accept()
-	if err != nil {
-		conn.Close()
-		return
-	}
-	go ssh.DiscardRequests(requests)
-
-	go func() {
-		defer channel.Close()
-		defer conn.Close()
-		io.Copy(channel, conn)
-	}()
-	go func() {
-		defer channel.Close()
-		defer conn.Close()
-		io.Copy(conn, channel)
-	}()
-}
-
-type Device struct {
-	Name       string `json:"Name"`
-	IpAddress  string `json:"IpAddress"`
-	IsOnline   bool   `json:"IsOnline"`
-	DeviceType string `json:"DeviceType"`
-	Os         string `json:"Os"`
-}
-
-func getStatus() (*ipnstate.Status, error) {
-	if tsServer == nil {
-		return nil, fmt.Errorf("not started")
-	}
-	lc, err := tsServer.LocalClient()
-	if err != nil {
-		return nil, err
-	}
-	return lc.Status(context.Background())
-}
-
-//export GetPeerListJson
-func GetPeerListJson() *C.char {
-	status, err := getStatus()
-	if err != nil || status == nil {
-		return C.CString("[]")
-	}
-
-	var devices []Device
-	for _, peer := range status.Peer {
-		ip := ""
-		if len(peer.TailscaleIPs) > 0 {
-			ip = peer.TailscaleIPs[0].String()
-		}
-
-		devices = append(devices, Device{
-			Name:       peer.HostName,
-			IpAddress:  ip,
-			IsOnline:   peer.Online,
-			DeviceType: "Desktop",
-			Os:         peer.OS,
-		})
-	}
-
-	data, _ := json.Marshal(devices)
-	return C.CString(string(data))
-}
-
 //export GetBackendState
 func GetBackendState() *C.char {
-	if internalState == "Starting" || internalState == "Error" {
-		return C.CString(internalState)
-	}
-
-	status, err := getStatus()
-	if err != nil {
-		return C.CString(internalState)
-	}
-
-	if len(status.TailscaleIPs) > 0 && status.BackendState == "Running" {
-		internalState = "Running"
-		return C.CString("Running")
-	}
-
-	if status.AuthURL != "" {
-		lastAuthUrl = status.AuthURL
-		internalState = "NeedsLogin"
-		return C.CString("NeedsLogin")
-	}
-
-	if status.BackendState != "" {
-		internalState = status.BackendState
-	}
-
 	return C.CString(internalState)
 }
 
@@ -498,53 +162,102 @@ func GetTailscaleIp() *C.char {
 
 //export GetLoginUrl
 func GetLoginUrl() *C.char {
-	if lastAuthUrl != "" {
-		return C.CString(lastAuthUrl)
-	}
-	status, err := getStatus()
-	if err != nil || status == nil {
-		return C.CString("")
-	}
-	return C.CString(status.AuthURL)
+	return C.CString(lastAuthUrl)
+}
+
+//export GetLastErrorMsg
+func GetLastErrorMsg() *C.char {
+	return C.CString(lastErrorMsg)
 }
 
 //export LogoutNode
 func LogoutNode() {
 	mu.Lock()
 	defer mu.Unlock()
-	if tsServer == nil {
-		return
+	if tsServer != nil {
+		if lc, err := tsServer.LocalClient(); err == nil {
+			lc.Logout(context.Background())
+		}
+		tsServer.Close()
+		tsServer = nil
+		internalState = "Stopped"
+		lastAuthUrl = ""
 	}
-	lc, err := tsServer.LocalClient()
-	if err == nil {
-		log.Printf("[Go] Triggering Logout...")
-		lc.Logout(context.Background())
-		internalState = "NeedsLogin"
+}
+
+//export GetPeerListJson
+func GetPeerListJson() *C.char {
+	status, err := getStatus()
+	if err != nil || status == nil {
+		return C.CString("[]")
 	}
+
+	var devices []Device
+	if status.Self != nil {
+		selfIp := ""
+		if len(status.Self.TailscaleIPs) > 0 {
+			selfIp = status.Self.TailscaleIPs[0].String()
+		}
+		devices = append(devices, Device{
+			Name:       status.Self.HostName + " (This Device)",
+			IpAddress:  selfIp,
+			IsOnline:   true,
+			DeviceType: "Mobile",
+			Os:         status.Self.OS,
+		})
+	}
+
+	for _, peer := range status.Peer {
+		ip := ""
+		if len(peer.TailscaleIPs) > 0 {
+			ip = peer.TailscaleIPs[0].String()
+		}
+		devices = append(devices, Device{
+			Name:       peer.HostName,
+			IpAddress:  ip,
+			IsOnline:   peer.Online,
+			DeviceType: "Desktop",
+			Os:         peer.OS,
+		})
+	}
+
+	b, _ := json.Marshal(devices)
+	return C.CString(string(b))
 }
 
 //export StopEchoLinkNode
 func StopEchoLinkNode() {
 	mu.Lock()
 	defer mu.Unlock()
-	internalState = "NotStarted"
-	audioTarget = ""
-	if sshLn != nil {
-		sshLn.Close()
-		sshLn = nil
-	}
-	if audioMeshLn != nil {
-		audioMeshLn.Close()
-		audioMeshLn = nil
-	}
-	if audioLocalLn != nil {
-		audioLocalLn.Close()
-		audioLocalLn = nil
-	}
 	if tsServer != nil {
 		tsServer.Close()
 		tsServer = nil
+		internalState = "Stopped"
 	}
+}
+
+func getStatus() (*ipnstate.Status, error) {
+	if tsServer == nil {
+		return nil, fmt.Errorf("not started")
+	}
+	lc, err := tsServer.LocalClient()
+	if err != nil {
+		return nil, err
+	}
+	return lc.Status(context.Background())
+}
+
+type Device struct {
+	Name       string `json:"name"`
+	IpAddress  string `json:"ipAddress"`
+	IsOnline   bool   `json:"isOnline"`
+	DeviceType string `json:"deviceType"`
+	Os         string `json:"os"`
+}
+
+//export SetAudioTargetHost
+func SetAudioTargetHost(host *C.char) {
+	audioTarget = C.GoString(host)
 }
 
 func main() {}

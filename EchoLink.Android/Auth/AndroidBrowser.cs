@@ -13,7 +13,7 @@ public class AndroidBrowser : IBrowser
     // Holds the state to unblock the login flow when the callback intent is intercepted
     public static TaskCompletionSource<string>? TaskCompletionSource;
 
-    public Task<BrowserResult> InvokeAsync(BrowserOptions options, CancellationToken cancellationToken = default)
+    public async Task<BrowserResult> InvokeAsync(BrowserOptions options, CancellationToken cancellationToken = default)
     {
         TaskCompletionSource = new TaskCompletionSource<string>();
 
@@ -21,16 +21,33 @@ public class AndroidBrowser : IBrowser
         var intent = new Intent(Intent.ActionView, global::Android.Net.Uri.Parse(options.StartUrl));
         intent.AddFlags(ActivityFlags.NewTask);
         
-        if (Application.Context != null)
+        var context = Application.Context;
+        if (context != null)
         {
-            Application.Context.StartActivity(intent);
+            context.StartActivity(intent);
+        }
+        else
+        {
+            return new BrowserResult { ResultType = BrowserResultType.UnknownError, Error = "Application context is null" };
         }
 
         // Wait for MainActivity.OnNewIntent to resolve the TaskCompletionSource
-        return TaskCompletionSource.Task.ContinueWith(t => new BrowserResult
+        try 
         {
-            ResultType = BrowserResultType.Success,
-            Response = t.Result
-        }, cancellationToken);
+            string result = await TaskCompletionSource.Task.WaitAsync(cancellationToken);
+            return new BrowserResult
+            {
+                ResultType = BrowserResultType.Success,
+                Response = result
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new BrowserResult { ResultType = BrowserResultType.Timeout, Error = "Login timed out or was cancelled." };
+        }
+        catch (Exception ex)
+        {
+             return new BrowserResult { ResultType = BrowserResultType.UnknownError, Error = ex.Message };
+        }
     }
 }

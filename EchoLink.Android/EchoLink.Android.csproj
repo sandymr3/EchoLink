@@ -23,7 +23,10 @@
     <AndroidNativeLibrary Include="lib\arm64-v8a\libecholink.so">
       <Link>lib\arm64-v8a\libecholink.so</Link>
     </AndroidNativeLibrary> 
-  </ItemGroup>
+    <AndroidNativeLibrary Include="lib\x86_64\libecholink.so">
+      <Link>lib\x86_64\libecholink.so</Link>
+    </AndroidNativeLibrary> 
+</ItemGroup>
 
 </Project>
   

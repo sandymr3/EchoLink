@@ -114,7 +114,7 @@ public partial class LoginViewModel : ViewModelBase
 
             if (string.IsNullOrEmpty(jwt))
             {
-                StatusText = "Login failed or was cancelled.";
+                StatusText = "Login returned empty token.";
                 return;
             }
 

@@ -6,6 +6,21 @@
         android:theme="@style/MyTheme.NoActionBar"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_popup_sync">
+        <activity android:name="com.echolink.app.MainActivity"
+                  android:exported="true"
+                  android:launchMode="singleTask"
+                  android:configChanges="orientation|screenSize|uiMode">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="echo-link.app" android:pathPrefix="/oidc/callback" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="EchoLinkMeshNetworking" />
     </application>
     <uses-permission android:name="android.permission.INTERNET" />

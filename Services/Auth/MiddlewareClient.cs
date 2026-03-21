@@ -11,7 +11,7 @@ public class MiddlewareClient
     public static MiddlewareClient Instance { get; } = new();
 
     private readonly HttpClient _httpClient;
-    private const string MiddlewareBaseUrl = "http://localhost:8081"; // TODO: Load from configuration or environment
+    private const string MiddlewareBaseUrl = "https://api.echo-link.app"; // TODO: Load from configuration or environment
 
     private MiddlewareClient()
     {
