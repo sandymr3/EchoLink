@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 
 namespace EchoLink.Services;
@@ -23,14 +24,30 @@ public class SecretsService
     {
         try
         {
-            // Look for secrets.json in the application's base directory
+            // 1. Try to load from Embedded Resource (Best for Android/Production)
+            var assembly = Assembly.GetExecutingAssembly();
+            // Resource name is usually [DefaultNamespace].[FileName]
+            var resourceName = "EchoLink.secrets.json";
+
+            using (Stream? stream = assembly.GetManifestResourceStream(resourceName))
+            {
+                if (stream != null)
+                {
+                    using (StreamReader reader = new StreamReader(stream))
+                    {
+                        string json = reader.ReadToEnd();
+                        var data = JsonSerializer.Deserialize<SecretsData>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (data != null) return data;
+                    }
+                }
+            }
+
+            // 2. Fallback to local file system (Best for Desktop Development)
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             string secretsPath = Path.Combine(baseDir, "secrets.json");
 
-            // Also check project root for development
             if (!File.Exists(secretsPath))
             {
-                // Navigate up from bin/Debug/net10.0 to find it in the project root if needed
                 string? current = baseDir;
                 while (current != null)
                 {
@@ -47,12 +64,13 @@ public class SecretsService
             if (File.Exists(secretsPath))
             {
                 var json = File.ReadAllText(secretsPath);
-                return JsonSerializer.Deserialize<SecretsData>(json) ?? new SecretsData();
+                return JsonSerializer.Deserialize<SecretsData>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new SecretsData();
             }
         }
         catch (Exception ex)
         {
-            LoggingService.Instance.Error($"Failed to load secrets: {ex.Message}");
+            // LoggingService may not be ready yet, use Console as fallback
+            Console.WriteLine($"[SecretsService] Critical failure loading secrets: {ex.Message}");
         }
         return new SecretsData();
     }

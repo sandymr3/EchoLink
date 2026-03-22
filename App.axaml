@@ -8,6 +8,7 @@
     <Application.Resources>
         <conv:BoolToColorConverter x:Key="BoolToColor"
                                    TrueColor="#00E676" FalseColor="#4A4A4A"/>
+        <conv:StringConverter x:Key="StringConverter"/>
     </Application.Resources>
 
     <Application.DataTemplates>

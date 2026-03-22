@@ -48,6 +48,18 @@ public class MiddlewareClient
         public string Pin { get; set; } = "";
     }
 
+    public class PairData
+    {
+        [JsonPropertyName("ip_address")]
+        public string IpAddress { get; set; } = "";
+        
+        [JsonPropertyName("public_key")]
+        public string PublicKey { get; set; } = "";
+        
+        [JsonPropertyName("hostname")]
+        public string Hostname { get; set; } = "";
+    }
+
     public async Task<string?> ExchangeJwtForPreAuthKeyAsync(string jwt)
     {
         try
@@ -115,6 +127,52 @@ public class MiddlewareClient
         catch (Exception ex)
         {
             LoggingService.Instance.Error($"[Middleware] Exception claiming guest PIN: {ex.Message}");
+            return null;
+        }
+    }
+
+    public async Task<(string? Pin, int ExpiresInMinutes)> CreatePairingPinAsync(PairData data)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsJsonAsync("/auth/pair/create", data);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                LoggingService.Instance.Error($"[Middleware] Failed to create pairing PIN. Status: {response.StatusCode}, Body: {errorBody}");
+                return (null, 0);
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<InviteResponse>();
+            return (result?.Pin, result?.ExpiresInMinutes ?? 0);
+        }
+        catch (Exception ex)
+        {
+            LoggingService.Instance.Error($"[Middleware] Exception creating pairing PIN: {ex.Message}");
+            return (null, 0);
+        }
+    }
+
+    public async Task<PairData?> ClaimPairingPinAsync(string pin)
+    {
+        try
+        {
+            var request = new ClaimRequest { Pin = pin };
+            var response = await _httpClient.PostAsJsonAsync("/auth/pair/claim", request);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                LoggingService.Instance.Error($"[Middleware] Failed to claim pairing PIN. Status: {response.StatusCode}, Body: {errorBody}");
+                return null;
+            }
+
+            return await response.Content.ReadFromJsonAsync<PairData>();
+        }
+        catch (Exception ex)
+        {
+            LoggingService.Instance.Error($"[Middleware] Exception claiming pairing PIN: {ex.Message}");
             return null;
         }
     }

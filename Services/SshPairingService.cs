@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -14,6 +14,8 @@ namespace EchoLink.Services
         private const int KeyExchangePort = 44444; // Fixed port for key exchange over Tailscale
         private readonly TailscaleService _tailscaleService;
         private CancellationTokenSource? _listeningCts;
+
+        public event Action? PairingCompleted;
 
         // Echolink specific SSH keys
         private readonly string _sshDir;
@@ -169,8 +171,27 @@ namespace EchoLink.Services
             {
                 try
                 {
-                    string incomingPayload = await reader.ReadLineAsync();
+                    string? incomingPayload = await reader.ReadLineAsync();
                     if (string.IsNullOrWhiteSpace(incomingPayload)) return;
+
+                    if (incomingPayload.StartsWith("PAIRING_COMPLETE"))
+                    {
+                        var handshakeParts = incomingPayload.Split("|||");
+                        if (handshakeParts.Length == 3)
+                        {
+                            string hHostname = handshakeParts[1];
+                            string hIp = handshakeParts[2];
+                            
+                            var settings = SettingsService.Instance.Load();
+                            settings.PeerUsernames[hIp] = "echolink-mesh"; // Trusted
+                            SettingsService.Instance.Save(settings);
+                            
+                            LoggingService.Instance.Info($"[Pairing] Bidirectional pairing confirmed with {hHostname} ({hIp})");
+                        }
+                        
+                        PairingCompleted?.Invoke();
+                        return;
+                    }
 
                     // Payload should be: "HOSTNAME|||USERNAME|||IP_ADDRESS|||PUBLIC_KEY"
                     var parts = incomingPayload.Split("|||");
@@ -338,6 +359,24 @@ namespace EchoLink.Services
             }
         }
 
+        public async Task SendPairingCompleteAsync(string targetIp)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var client = await ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
+                if (client != null)
+                {
+                    using var stream = client.GetStream();
+                    using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+                    
+                    string myIp = await _tailscaleService.GetTailscaleIpAsync(cts.Token) ?? "Unknown";
+                    await writer.WriteLineAsync($"PAIRING_COMPLETE|||{Environment.MachineName}|||{myIp}");
+                }
+            }
+            catch { /* Ignore handshake errors */ }
+        }
+
         private async Task AddToAuthorizedKeysAsync(string publicKey)
         {
             string authKeysPath = Path.Combine(_sshDir, "authorized_keys");
@@ -421,4 +460,3 @@ namespace EchoLink.Services
         }
     }
 }
-

@@ -70,6 +70,13 @@ public partial class App : Application
     {
         _log.Info("[Startup] Initializing application...");
         
+        var settings = SettingsService.Instance.Load();
+        if (settings.IsLoggedIn)
+        {
+            _log.Info("[Startup] User was logged in. Auto-starting Tailscale daemon...");
+            await TailscaleService.Instance.StartDaemonAsync(null!, false);
+        }
+
         // Give the service/daemon time to initialize
         await Task.Delay(2000);
 

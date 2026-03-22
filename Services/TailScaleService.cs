@@ -506,7 +506,7 @@ public class TailscaleService
             try
             {
                 var json = NativeBridge?.GetPeerListJson();
-                var settingsData = SettingsService.Instance.Load(); // FIX: Load settings on Android
+                var settingsData = SettingsService.Instance.Load();
                 
                 if (!string.IsNullOrEmpty(json))
                 {
@@ -516,8 +516,7 @@ public class TailscaleService
                     {
                         foreach (var peer in peerDevices)
                         {
-                            // FIX: Determine IsPaired status based on saved settings
-                            peer.IsPaired = settingsData.PeerUsernames.ContainsKey(peer.IpAddress);
+                            peer.IsPaired = peer.IsSelf || settingsData.PeerUsernames.ContainsKey(peer.IpAddress);
                             androidDevices.Add(peer);
                         }
                     }
@@ -581,6 +580,17 @@ public class TailscaleService
         string os = node.TryGetProperty("OS", out var osEl) ? osEl.GetString() ?? "" : "";
         bool online = node.TryGetProperty("Online", out var onEl) && onEl.GetBoolean();
         string ip = ExtractIpv4(node) ?? "";
+        string userId = node.TryGetProperty("UserID", out var uid) ? uid.ValueKind == JsonValueKind.Number ? uid.GetInt64().ToString() : uid.GetString() ?? "" : "";
+        
+        var tags = new List<string>();
+        if (node.TryGetProperty("Tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in tagsEl.EnumerateArray())
+            {
+                string? s = t.GetString();
+                if (s != null) tags.Add(s);
+            }
+        }
 
         string deviceType = os.ToLowerInvariant() switch
         {
@@ -593,7 +603,6 @@ public class TailscaleService
         string lastSeen = "";
         if (node.TryGetProperty("LastSeen", out var ls) && DateTime.TryParse(ls.GetString(), out var dt))
         {
-            // Spoof "Online" status if device was seen in the last 10 minutes (iOS/Android sleep quickly)
             if (!online && (DateTime.UtcNow - dt).TotalMinutes <= 10)
             {
                 online = true;
@@ -612,7 +621,9 @@ public class TailscaleService
             Os = os,
             LastSeen = lastSeen,
             IsSelf = isSelf,
-            IsPaired = isPaired
+            IsPaired = isPaired,
+            UserId = userId,
+            Tags = tags
         };
     }
 public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = default)
@@ -803,6 +814,10 @@ public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = de
 
     public async Task LogoutAsync(CancellationToken ct = default)
     {
+        var settings = SettingsService.Instance.Load();
+        settings.IsLoggedIn = false;
+        SettingsService.Instance.Save(settings);
+
         if (OperatingSystem.IsAndroid())
         {
             _log.Info("[Tailscale] Android Logout: Calling native bridge logout...");

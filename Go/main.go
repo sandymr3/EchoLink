@@ -198,12 +198,18 @@ func GetPeerListJson() *C.char {
 		if len(status.Self.TailscaleIPs) > 0 {
 			selfIp = status.Self.TailscaleIPs[0].String()
 		}
+		var selfTags []string
+		if status.Self.Tags != nil {
+			selfTags = status.Self.Tags.AsSlice()
+		}
 		devices = append(devices, Device{
 			Name:       status.Self.HostName + " (This Device)",
 			IpAddress:  selfIp,
 			IsOnline:   true,
 			DeviceType: "Mobile",
 			Os:         status.Self.OS,
+			UserID:     fmt.Sprintf("%d", status.Self.UserID),
+			Tags:       selfTags,
 		})
 	}
 
@@ -212,12 +218,18 @@ func GetPeerListJson() *C.char {
 		if len(peer.TailscaleIPs) > 0 {
 			ip = peer.TailscaleIPs[0].String()
 		}
+		var peerTags []string
+		if peer.Tags != nil {
+			peerTags = peer.Tags.AsSlice()
+		}
 		devices = append(devices, Device{
 			Name:       peer.HostName,
 			IpAddress:  ip,
 			IsOnline:   peer.Online,
 			DeviceType: "Desktop",
 			Os:         peer.OS,
+			UserID:     fmt.Sprintf("%d", peer.UserID),
+			Tags:       peerTags,
 		})
 	}
 
@@ -248,11 +260,13 @@ func getStatus() (*ipnstate.Status, error) {
 }
 
 type Device struct {
-	Name       string `json:"name"`
-	IpAddress  string `json:"ipAddress"`
-	IsOnline   bool   `json:"isOnline"`
-	DeviceType string `json:"deviceType"`
-	Os         string `json:"os"`
+	Name       string   `json:"name"`
+	IpAddress  string   `json:"ipAddress"`
+	IsOnline   bool     `json:"isOnline"`
+	DeviceType string   `json:"deviceType"`
+	Os         string   `json:"os"`
+	UserID     string   `json:"userId"`
+	Tags       []string `json:"tags"`
 }
 
 //export SetAudioTargetHost

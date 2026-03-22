@@ -137,6 +137,11 @@ public partial class LoginViewModel : ViewModelBase
             // Ecosystem node (not ephemeral) for standard login
             await TailscaleService.Instance.StartDaemonAsync(preAuthKey, false, ct);
 
+            // Persist the login state
+            var settings = SettingsService.Instance.Load();
+            settings.IsLoggedIn = true;
+            SettingsService.Instance.Save(settings);
+
             _log.Info("[Login] 'tailscale up' succeeded — transitioning to main window.");
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
         }
