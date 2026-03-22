@@ -12,9 +12,11 @@ static inline void android_log(const char* msg) {
 */
 import "C"
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -23,6 +25,9 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/armon/go-socks5"
+	"github.com/gliderlabs/ssh"
+	"github.com/pkg/sftp"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsnet"
@@ -36,12 +41,14 @@ func init() {
 }
 
 var (
-	tsServer      *tsnet.Server
-	mu            sync.Mutex
-	internalState string = "Stopped"
-	lastAuthUrl   string = ""
-	lastErrorMsg  string = ""
-	audioTarget   string = ""
+	tsServer         *tsnet.Server
+	mu               sync.Mutex
+	internalState    string = "Stopped"
+	lastAuthUrl      string = ""
+	lastErrorMsg     string = ""
+	audioTarget      string = ""
+	tempSSHPasswords = make(map[string]string)
+	sshMu            sync.Mutex
 )
 
 //export StartEchoLinkNode
@@ -134,6 +141,9 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 		if err == nil {
 			log.Printf("[Go] tsServer.Up() SUCCESS! IP: %v", status.TailscaleIPs)
 			internalState = "Running"
+			go startSocks5Proxy()
+			go startPairingForwarder()
+			go startInternalSshServer()
 		} else {
 			log.Printf("[Go] tsServer.Up() FAILED: %v", err)
 			lastErrorMsg = fmt.Sprintf("tsnet.Up error: %v", err)
@@ -210,6 +220,7 @@ func GetPeerListJson() *C.char {
 			Os:         status.Self.OS,
 			UserID:     fmt.Sprintf("%d", status.Self.UserID),
 			Tags:       selfTags,
+			IsSelf:     true,
 		})
 	}
 
@@ -230,6 +241,7 @@ func GetPeerListJson() *C.char {
 			Os:         peer.OS,
 			UserID:     fmt.Sprintf("%d", peer.UserID),
 			Tags:       peerTags,
+			IsSelf:     false,
 		})
 	}
 
@@ -267,11 +279,118 @@ type Device struct {
 	Os         string   `json:"os"`
 	UserID     string   `json:"userId"`
 	Tags       []string `json:"tags"`
+	IsSelf     bool     `json:"isSelf"`
 }
 
 //export SetAudioTargetHost
 func SetAudioTargetHost(host *C.char) {
 	audioTarget = C.GoString(host)
+}
+
+func startSocks5Proxy() {
+	conf := &socks5.Config{
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return tsServer.Dial(ctx, network, addr)
+		},
+	}
+	server, err := socks5.New(conf)
+	if err != nil {
+		log.Printf("[Socks5] Failed to create: %v", err)
+		return
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:1055")
+	if err != nil {
+		log.Printf("[Socks5] Failed to listen: %v", err)
+		return
+	}
+	log.Printf("[Socks5] Listening on 127.0.0.1:1055")
+	server.Serve(ln)
+}
+
+func startPairingForwarder() {
+	ln, err := tsServer.Listen("tcp", ":44444")
+	if err != nil {
+		log.Printf("[Pairing] Failed to listen on mesh: %v", err)
+		return
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			local, err := net.Dial("tcp", "127.0.0.1:44444")
+			if err != nil {
+				return
+			}
+			defer local.Close()
+			go io.Copy(local, c)
+			io.Copy(c, local)
+		}(conn)
+	}
+}
+
+func sftpHandler(sess ssh.Session) {
+	server, err := sftp.NewServer(sess)
+	if err != nil {
+		log.Printf("[SFTP] Server init error: %v", err)
+		return
+	}
+	if err := server.Serve(); err != nil && err != io.EOF {
+		log.Printf("[SFTP] Server exited with error: %v", err)
+	}
+}
+
+func startInternalSshServer() {
+	log.Printf("[SSH] Starting internal server on mesh port 2222")
+
+	publicKeyOption := ssh.PublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
+		sshMu.Lock()
+		defer sshMu.Unlock()
+		offeredKeyBytes := key.Marshal()
+		for _, validPubStr := range tempSSHPasswords {
+			parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(validPubStr))
+			if err == nil && bytes.Equal(parsedKey.Marshal(), offeredKeyBytes) {
+				return true
+			}
+		}
+		log.Printf("[SSH] Rejected public key login attempt")
+		return false
+	})
+
+	server := &ssh.Server{
+		Handler: func(s ssh.Session) {
+			io.WriteString(s, "EchoLink internal SSH server (Android).\n")
+		},
+		SubsystemHandlers: map[string]ssh.SubsystemHandler{
+			"sftp": sftpHandler,
+		},
+	}
+	server.SetOption(publicKeyOption)
+
+	// Use tsServer.Listen to listen on the tailnet interface specifically
+	ln, err := tsServer.Listen("tcp", ":2222")
+	if err != nil {
+		log.Printf("[SSH] Failed to listen on mesh: %v", err)
+		return
+	}
+	
+	err = server.Serve(ln)
+	if err != nil {
+		log.Printf("[SSH] Server failed: %v", err)
+	}
+}
+
+//export SetTempSshPassword
+func SetTempSshPassword(ip *C.char, password *C.char) {
+	sshMu.Lock()
+	defer sshMu.Unlock()
+	ipStr := C.GoString(ip)
+	passStr := C.GoString(password)
+	// We are repurposing this variable/function to store the Public Key string
+	tempSSHPasswords[ipStr] = passStr
+	log.Printf("[SSH] Authorized public key set for %s", ipStr)
 }
 
 func main() {}
