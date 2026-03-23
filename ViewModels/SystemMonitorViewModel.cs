@@ -4,36 +4,72 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
 using EchoLink.Services;
-using Renci.SshNet;
+using System.Threading.Tasks;
+using System;
 
 namespace EchoLink.ViewModels;
 
-public partial class SystemMonitorViewModel : ViewModelBase
+public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
 {
     private readonly LoggingService _log = LoggingService.Instance;
-    private const int Socks5Port = 1055;
 
     [ObservableProperty] private Device? _selectedDevice;
     [ObservableProperty] private bool _isConnected;
     [ObservableProperty] private bool _isConnecting;
     [ObservableProperty] private string _statusText = "Select a device and click Connect";
+    
+    // UI Properties for Metrics
     [ObservableProperty] private double _cpuUsage;
     [ObservableProperty] private double _ramUsage;
+    [ObservableProperty] private double _diskUsage;
     [ObservableProperty] private string _ramDetailText = "— / —";
+    [ObservableProperty] private string _diskDetailText = "— / —";
+    [ObservableProperty] private string _batteryText = "—";
+    [ObservableProperty] private string _uptimeText = "—";
     [ObservableProperty] private string _lastUpdated = "—";
+    
     [ObservableProperty] private string _cpuLabel = "CPU";
     [ObservableProperty] private string _ramLabel = "RAM";
+    [ObservableProperty] private string _diskLabel = "Disk";
 
     public ObservableCollection<Device> OnlineDevices { get; } = new();
 
-    private SshClient? _sshClient;
-    private ITelemetryStrategy? _strategy;
     private DispatcherTimer? _pollTimer;
     private volatile bool _isPolling;
 
     public SystemMonitorViewModel()
     {
         _ = LoadDevicesAsync();
+        SystemMonitorService.Instance.SnapshotReceived += OnSnapshotReceived;
+    }
+
+    private void OnSnapshotReceived(TelemetrySnapshot snapshot)
+    {
+        if (!IsConnected) return;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            CpuUsage = Math.Round(snapshot.CpuLoadPercentage, 1);
+            RamUsage = Math.Round(snapshot.RamLoadPercentage, 1);
+            DiskUsage = Math.Round(snapshot.DiskLoadPercentage, 1);
+            
+            RamDetailText = $"{snapshot.UsedRamDisplay} / {snapshot.TotalRamDisplay}";
+            DiskDetailText = $"{snapshot.UsedDiskDisplay} / {snapshot.TotalDiskDisplay}";
+            
+            UptimeText = snapshot.UptimeDisplay;
+            
+            if (snapshot.BatteryPercentage >= 0)
+            {
+                BatteryText = $"{snapshot.BatteryPercentage:F0}% {(snapshot.IsCharging ? "⚡" : "🔋")}";
+            }
+            else
+            {
+                BatteryText = "N/A";
+            }
+
+            LastUpdated = $"Updated {DateTime.Now:HH:mm:ss}";
+            _isPolling = false; // Reset lock since we got a response
+        });
     }
 
     [RelayCommand]
@@ -62,7 +98,11 @@ public partial class SystemMonitorViewModel : ViewModelBase
         StatusText = $"Connecting to {SelectedDevice.Name}…";
         CpuUsage = 0;
         RamUsage = 0;
+        DiskUsage = 0;
         RamDetailText = "— / —";
+        DiskDetailText = "— / —";
+        BatteryText = "—";
+        UptimeText = "—";
         LastUpdated = "—";
 
         try
@@ -70,45 +110,35 @@ public partial class SystemMonitorViewModel : ViewModelBase
             var pairingService = new SshPairingService(TailscaleService.Instance);
             await pairingService.EnsureKeyPairAsync();
 
-            var settings = SettingsService.Instance.Load();
-            string username = settings.PeerUsernames.TryGetValue(SelectedDevice.IpAddress, out var u)
-                ? u
-                : Environment.UserName;
+            string privateKeyPath = pairingService.PrivateKeyPath;
 
-            int sshPort = SelectedDevice.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true
-                ? 2222
-                : 22;
+            bool connected = await SystemMonitorService.Instance.ConnectAsync(SelectedDevice, privateKeyPath, CancellationToken.None);
+            if (!connected)
+            {
+                throw new Exception("Failed to establish Unified Protocol tunnel for System Monitor.");
+            }
 
-            _strategy = DetectStrategy(SelectedDevice);
             CpuLabel = $"CPU — {SelectedDevice.Name}";
             RamLabel = $"RAM — {SelectedDevice.Name}";
-
-            var privateKeyFile = new PrivateKeyFile(pairingService.PrivateKeyPath);
-            var connectionInfo = new ConnectionInfo(
-                SelectedDevice.IpAddress, sshPort, username,
-                ProxyTypes.Socks5, "127.0.0.1", Socks5Port, "", "",
-                new PrivateKeyAuthenticationMethod(username, privateKeyFile));
-
-            _sshClient = new SshClient(connectionInfo);
-            await Task.Run(() => _sshClient.Connect());
+            DiskLabel = $"Disk — {SelectedDevice.Name}";
 
             IsConnected = true;
             StatusText = $"Connected · polling every 10 s";
-            _log.Info($"[SysMonitor] SSH connected to {SelectedDevice.Name}");
+            _log.Info($"[SysMonitor] Unified Protocol connected to {SelectedDevice.Name}");
 
-            // Run first poll immediately
-            await PollTelemetryAsync();
-
-            // Start poll timer — tick is skipped if previous poll is still running
+            // Start poll timer
             _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             _pollTimer.Tick += async (_, _) => await PollTelemetryAsync();
             _pollTimer.Start();
+            
+            // Run first poll immediately
+            await PollTelemetryAsync();
         }
         catch (Exception ex)
         {
             StatusText = $"❌ {ex.Message}";
             _log.Error($"[SysMonitor] Connect failed: {ex.Message}");
-            CleanupSsh();
+            Disconnect();
         }
         finally
         {
@@ -119,101 +149,54 @@ public partial class SystemMonitorViewModel : ViewModelBase
     [RelayCommand]
     private void Disconnect()
     {
-        CleanupSsh();
+        _pollTimer?.Stop();
+        _pollTimer = null;
+        
         IsConnected = false;
         CpuUsage = 0;
         RamUsage = 0;
+        DiskUsage = 0;
         RamDetailText = "— / —";
+        DiskDetailText = "— / —";
+        BatteryText = "—";
+        UptimeText = "—";
         LastUpdated = "—";
         CpuLabel = "CPU";
         RamLabel = "RAM";
+        DiskLabel = "Disk";
         StatusText = "Disconnected";
+        _isPolling = false;
+        
+        // We don't forcefully close the UnifiedClient here because it's shared.
         _log.Info("[SysMonitor] Disconnected.");
     }
 
     private async Task PollTelemetryAsync()
     {
-        // Hang-test guard: skip tick if previous request hasn't finished
-        if (_isPolling || _sshClient is null || _strategy is null) return;
-        _isPolling = true;
+        if (_isPolling || !IsConnected) return;
+        _isPolling = true; // Wait for response before allowing another poll
 
         try
         {
-            // Connection-drop check before attempting the command
-            if (!_sshClient.IsConnected)
+            await SystemMonitorService.Instance.RequestSnapshotAsync();
+            
+            // Timeout logic: if we don't get a response in 5 seconds, unlock the poller
+            _ = Task.Run(async () =>
             {
-                HandleConnectionDrop();
-                return;
-            }
-
-            var snapshot = await _strategy.GetSnapshotAsync(_sshClient);
-
-            // Marshal back to UI thread
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                CpuUsage = Math.Round(snapshot.CpuLoadPercentage, 1);
-                RamUsage = Math.Round(snapshot.RamLoadPercentage, 1);
-                RamDetailText = $"{snapshot.UsedRamDisplay} / {snapshot.TotalRamDisplay}";
-                LastUpdated = $"Updated {DateTime.Now:HH:mm:ss}";
+                await Task.Delay(5000);
+                _isPolling = false;
             });
         }
         catch (Exception ex)
         {
-            // Detect broken SSH pipe
-            bool isConnectionError =
-                ex is Renci.SshNet.Common.SshConnectionException
-                || ex is System.Net.Sockets.SocketException
-                || ex is ObjectDisposedException
-                || (_sshClient?.IsConnected == false);
-
-            if (isConnectionError)
-            {
-                await Dispatcher.UIThread.InvokeAsync(HandleConnectionDrop);
-            }
-            else
-            {
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                    StatusText = $"⚠ Poll failed: {ex.Message}");
-                _log.Warning($"[SysMonitor] Poll error: {ex.Message}");
-            }
-        }
-        finally
-        {
+            _log.Warning($"[SysMonitor] Request error: {ex.Message}");
             _isPolling = false;
         }
     }
 
-    /// <summary>
-    /// Called on the UI thread when the SSH connection is detected as broken.
-    /// Stops the timer and updates UI to "Device Offline" state.
-    /// </summary>
-    private void HandleConnectionDrop()
+    public void Dispose()
     {
-        _log.Warning("[SysMonitor] SSH connection lost — stopping poller.");
-        CleanupSsh();
-        IsConnected = false;
-        StatusText = "⚠ Device Offline";
-        LastUpdated = $"Lost {DateTime.Now:HH:mm:ss}";
-    }
-
-    private static ITelemetryStrategy DetectStrategy(Device device)
-    {
-        var os = device.Os ?? string.Empty;
-        if (os.Contains("windows", StringComparison.OrdinalIgnoreCase))
-            return new WindowsTelemetryStrategy();
-        if (os.Contains("android", StringComparison.OrdinalIgnoreCase))
-            return new AndroidTelemetryStrategy();
-        return new LinuxTelemetryStrategy(); // Default: Linux, macOS, etc.
-    }
-
-    private void CleanupSsh()
-    {
+        SystemMonitorService.Instance.SnapshotReceived -= OnSnapshotReceived;
         _pollTimer?.Stop();
-        _pollTimer = null;
-
-        try { _sshClient?.Disconnect(); } catch { /* ignore */ }
-        _sshClient?.Dispose();
-        _sshClient = null;
-        _strategy = null;
     }
 }

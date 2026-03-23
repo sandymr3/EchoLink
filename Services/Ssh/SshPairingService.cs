@@ -122,6 +122,53 @@ namespace EchoLink.Services
             return await File.ReadAllTextAsync(PublicKeyPath);
         }
 
+        public async Task TrustPublicKeyAsync(string ip, string username, string publicKey)
+        {
+            await AddToAuthorizedKeysAsync(publicKey);
+
+            if (OperatingSystem.IsAndroid())
+            {
+                TailscaleService.Instance.NativeBridge?.SetTempSshPassword(ip, publicKey);
+            }
+
+            var settings = SettingsService.Instance.Load();
+            settings.PeerUsernames[ip] = username;
+            settings.PeerPublicKeys[ip] = publicKey;
+            SettingsService.Instance.Save(settings);
+        }
+
+        public async Task UntrustPublicKeyAsync(string ip)
+        {
+            var settings = SettingsService.Instance.Load();
+            if (settings.PeerPublicKeys.TryGetValue(ip, out var publicKey))
+            {
+                await RemoveFromAuthorizedKeysAsync(publicKey);
+                settings.PeerPublicKeys.Remove(ip);
+            }
+            
+            settings.PeerUsernames.Remove(ip);
+            SettingsService.Instance.Save(settings);
+
+            if (OperatingSystem.IsAndroid())
+            {
+                TailscaleService.Instance.NativeBridge?.RemoveTempSshPassword(ip);
+            }
+        }
+
+        private async Task RemoveFromAuthorizedKeysAsync(string publicKey)
+        {
+            string authKeysPath = Path.Combine(_sshDir, "authorized_keys");
+            if (!File.Exists(authKeysPath)) return;
+
+            var lines = await File.ReadAllLinesAsync(authKeysPath);
+            var newLines = lines.Where(line => !line.Trim().Contains(publicKey.Trim())).ToList();
+
+            if (lines.Length != newLines.Count)
+            {
+                await File.WriteAllLinesAsync(authKeysPath, newLines);
+            }
+        }
+
         /// <summary>
         /// Call this on App Startup if we have Tailscale IP available
         /// </summary>
@@ -145,8 +192,8 @@ namespace EchoLink.Services
                 var myIp = await _tailscaleService.GetTailscaleIpAsync(cancellationToken);
                 if (string.IsNullOrEmpty(myIp)) return;
 
-                // Listen on all IPs including Tailscale
-                var listener = new TcpListener(IPAddress.Any, KeyExchangePort);
+                // Listen strictly on localhost, as Go forwards mesh traffic to 127.0.0.1:44444
+                var listener = new TcpListener(IPAddress.Loopback, KeyExchangePort);
                 listener.Start();
 
                 // Stop listener when cancelled
@@ -177,15 +224,13 @@ namespace EchoLink.Services
                     if (incomingPayload.StartsWith("PAIRING_COMPLETE"))
                     {
                         var handshakeParts = incomingPayload.Split("|||");
-                        if (handshakeParts.Length == 3)
+                        if (handshakeParts.Length == 4)
                         {
                             string hHostname = handshakeParts[1];
                             string hIp = handshakeParts[2];
+                            string hPubKey = handshakeParts[3];
                             
-                            var settings = SettingsService.Instance.Load();
-                            settings.PeerUsernames[hIp] = "echolink-mesh"; // Trusted
-                            SettingsService.Instance.Save(settings);
-                            
+                            await TrustPublicKeyAsync(hIp, "echolink-mesh", hPubKey);
                             LoggingService.Instance.Info($"[Pairing] Bidirectional pairing confirmed with {hHostname} ({hIp})");
                         }
                         
@@ -221,20 +266,11 @@ namespace EchoLink.Services
 
                     if (accepted)
                     {
-                        if (!alreadyPaired)
-                        {
-                            await AddToAuthorizedKeysAsync(publicKey);
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(remoteIp) && !string.IsNullOrWhiteSpace(remoteUsername))
-                        {
-                            var settings = SettingsService.Instance.Load();
-                            settings.PeerUsernames[remoteIp] = remoteUsername;
-                            SettingsService.Instance.Save(settings);
-                        }
+                        await TrustPublicKeyAsync(remoteIp, remoteUsername, publicKey);
                         
-                        // Reply with our OS username so the sender knows who to SSH as
-                        await writer.WriteLineAsync($"ACCEPTED|||{Environment.UserName}");
+                        // Reply with our OS username and Public Key so the sender can also trust us
+                        string myPubKey = await GetMyPublicKeyAsync();
+                        await writer.WriteLineAsync($"ACCEPTED|||{Environment.UserName}|||{myPubKey}");
                     }
                     else
                     {
@@ -264,49 +300,6 @@ namespace EchoLink.Services
             return false;
         }
 
-        private async Task<TcpClient?> ConnectViaSocks5Async(string targetIp, int port, CancellationToken ct)
-        {
-            var client = new TcpClient();
-            try
-            {
-                // Connect to the local SOCKS5 proxy provided by Tailscale
-                await client.ConnectAsync("127.0.0.1", 1055, ct);
-                var stream = client.GetStream();
-
-                // 1. SOCKS5 Greeting
-                await stream.WriteAsync(new byte[] { 0x05, 0x01, 0x00 }, ct);
-                byte[] response1 = new byte[2];
-                int read = await stream.ReadAsync(response1, ct);
-                if (read != 2 || response1[1] != 0x00) return null;
-
-                // 2. SOCKS5 Connection Request
-                byte[] destIpBytes = IPAddress.Parse(targetIp).GetAddressBytes();
-                byte[] portBytes = BitConverter.GetBytes((short)port);
-                if (BitConverter.IsLittleEndian) Array.Reverse(portBytes);
-
-                byte[] request = new byte[6 + destIpBytes.Length];
-                request[0] = 0x05; // Version
-                request[1] = 0x01; // CONNECT
-                request[2] = 0x00; // RSV
-                request[3] = 0x01; // IPv4
-                destIpBytes.CopyTo(request, 4);
-                portBytes.CopyTo(request, 4 + destIpBytes.Length);
-
-                await stream.WriteAsync(request, ct);
-
-                byte[] response2 = new byte[10];
-                read = await stream.ReadAsync(response2, ct);
-                if (response2[1] != 0x00) return null; // Success = 0x00
-
-                return client;
-            }
-            catch
-            {
-                client.Dispose();
-                return null;
-            }
-        }
-
         public async Task<(bool Accepted, string? TargetUsername)> RequestPairingAsync(string targetIp, string myHostname, string myUsername)
         {
             string myPubKey = await GetMyPublicKeyAsync();
@@ -317,7 +310,7 @@ namespace EchoLink.Services
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 
                 // Route through SOCKS5 proxy since we are running userspace tailscale
-                using var client = await ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
+                using var client = await NetworkService.Instance.ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
                 
                 if (client == null || !client.Connected)
                 {
@@ -335,14 +328,15 @@ namespace EchoLink.Services
 
                 if (response != null && response.StartsWith("ACCEPTED|||"))
                 {
-                    string targetUser = response.Substring("ACCEPTED|||".Length).Trim();
-                    
-                    // FIX: Save the pairing state immediately so it persists across UI refreshes
-                    var settings = SettingsService.Instance.Load();
-                    settings.PeerUsernames[targetIp] = targetUser;
-                    SettingsService.Instance.Save(settings);
-                    
-                    return (true, targetUser);
+                    var responseParts = response.Split("|||");
+                    if (responseParts.Length == 3)
+                    {
+                        string targetUser = responseParts[1];
+                        string targetPubKey = responseParts[2];
+
+                        await TrustPublicKeyAsync(targetIp, targetUser, targetPubKey);
+                        return (true, targetUser);
+                    }
                 }
                 
                 if (response == null)
@@ -364,14 +358,15 @@ namespace EchoLink.Services
             try
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                using var client = await ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
+                using var client = await NetworkService.Instance.ConnectViaSocks5Async(targetIp, KeyExchangePort, cts.Token);
                 if (client != null)
                 {
                     using var stream = client.GetStream();
                     using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
                     
                     string myIp = await _tailscaleService.GetTailscaleIpAsync(cts.Token) ?? "Unknown";
-                    await writer.WriteLineAsync($"PAIRING_COMPLETE|||{Environment.MachineName}|||{myIp}");
+                    string myPubKey = await GetMyPublicKeyAsync();
+                    await writer.WriteLineAsync($"PAIRING_COMPLETE|||{Environment.MachineName}|||{myIp}|||{myPubKey}");
                 }
             }
             catch { /* Ignore handshake errors */ }

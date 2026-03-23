@@ -144,6 +144,7 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 			go startSocks5Proxy()
 			go startPairingForwarder()
 			go startInternalSshServer()
+			go startUnifiedAppForwarder()
 		} else {
 			log.Printf("[Go] tsServer.Up() FAILED: %v", err)
 			lastErrorMsg = fmt.Sprintf("tsnet.Up error: %v", err)
@@ -342,6 +343,38 @@ func sftpHandler(sess ssh.Session) {
 	}
 }
 
+func startUnifiedAppForwarder() {
+	ln, err := tsServer.Listen("tcp", ":55555")
+	if err != nil {
+		log.Printf("[Unified] Failed to listen on mesh port 55555: %v", err)
+		return
+	}
+	defer ln.Close()
+	
+	log.Printf("[Unified] Listening on mesh port 55555, routing to 127.0.0.1:55555")
+
+	for {
+		meshConn, err := ln.Accept()
+		if err != nil {
+			log.Printf("[Unified] Forwarder accept error: %v", err)
+			return
+		}
+
+		go func(c net.Conn) {
+			defer c.Close()
+			localConn, err := net.Dial("tcp", "127.0.0.1:55555")
+			if err != nil {
+				log.Printf("[Unified] Failed to dial local C# service: %v", err)
+				return
+			}
+			defer localConn.Close()
+
+			go io.Copy(localConn, c)
+			io.Copy(c, localConn)
+		}(meshConn)
+	}
+}
+
 func startInternalSshServer() {
 	log.Printf("[SSH] Starting internal server on mesh port 2222")
 
@@ -391,6 +424,15 @@ func SetTempSshPassword(ip *C.char, password *C.char) {
 	// We are repurposing this variable/function to store the Public Key string
 	tempSSHPasswords[ipStr] = passStr
 	log.Printf("[SSH] Authorized public key set for %s", ipStr)
+}
+
+//export RemoveTempSshPassword
+func RemoveTempSshPassword(ip *C.char) {
+	sshMu.Lock()
+	defer sshMu.Unlock()
+	ipStr := C.GoString(ip)
+	delete(tempSSHPasswords, ipStr)
+	log.Printf("[SSH] Authorized public key removed for %s", ipStr)
 }
 
 func main() {}

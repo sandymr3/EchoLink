@@ -166,4 +166,22 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
             catch (Exception ex) { Console.WriteLine($"[NativeBridge-UltraDebug] LogoutNode failed: {ex.Message}"); }
         }
     }
+
+    public void SetTempSshPassword(string ip, string password)
+    {
+        if (_libraryLoaded)
+        {
+            try { NativeMethods.SetTempSshPassword(ip, password); }
+            catch (Exception ex) { Console.WriteLine($"[NativeBridge-UltraDebug] SetTempSshPassword failed: {ex.Message}"); }
+        }
+    }
+
+    public void RemoveTempSshPassword(string ip)
+    {
+        if (_libraryLoaded)
+        {
+            try { NativeMethods.RemoveTempSshPassword(ip); }
+            catch (Exception ex) { Console.WriteLine($"[NativeBridge-UltraDebug] RemoveTempSshPassword failed: {ex.Message}"); }
+        }
+    }
 }

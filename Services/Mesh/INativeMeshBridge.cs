@@ -11,4 +11,6 @@ public interface INativeMeshBridge
     void StartNode(string configDir, string authKey, string hostname, string localIp, bool isEphemeral);
     void StopNode();
     void LogoutNode();
+    void SetTempSshPassword(string ip, string password);
+    void RemoveTempSshPassword(string ip);
 }

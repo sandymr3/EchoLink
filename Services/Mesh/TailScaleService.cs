@@ -218,11 +218,18 @@ public class TailscaleService
                 }
             };
 
-            // Authenticate with the new key via the CLI
+            // Only pass --authkey and --force-reauth if a non-empty authKey is provided
             string cliPathCommand = CliPath();
             string unattended = OperatingSystem.IsWindows() ? " --unattended" : "";
-            string upArgs = PrefixSocketArg($"up --login-server={HeadscaleServer} --authkey=\"{authKey}\" --force-reauth{unattended}");
-            
+            string upArgs;
+            if (!string.IsNullOrEmpty(authKey))
+            {
+                upArgs = PrefixSocketArg($"up --login-server={HeadscaleServer} --authkey=\"{authKey}\" --force-reauth{unattended}");
+            }
+            else
+            {
+                upArgs = PrefixSocketArg($"up --login-server={HeadscaleServer}{unattended}");
+            }
             var upPsi = new ProcessStartInfo
             {
                 FileName = cliPathCommand,
@@ -230,7 +237,6 @@ public class TailscaleService
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            
             _log.Info($"[Tailscale] Running up command: {upPsi.FileName} {upPsi.Arguments}");
             var upProcess = Process.Start(upPsi);
             if (upProcess != null) await upProcess.WaitForExitAsync(ct);

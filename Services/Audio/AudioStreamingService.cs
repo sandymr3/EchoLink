@@ -3,6 +3,7 @@ using Concentus.Structs;
 using NAudio.Wave;
 using System.Net;
 using System.Net.Sockets;
+using EchoLink.Services.UnifiedProtocol;
 
 namespace EchoLink.Services;
 
@@ -12,19 +13,6 @@ public class AudioStreamingService
     public static AudioStreamingService Instance => _instance.Value;
 
     private readonly LoggingService _log = LoggingService.Instance;
-
-    // ── TCP Audio Tunnel Port ────────────────────────────────────────────────
-    // This port is used on the SERVER side (127.0.0.1 only).
-    // The sender connects to it through an SSH tunnel (same pattern as RemoteControlService).
-    public const int AudioTunnelPort = 44557;
-
-    // ── Server state (receiving audio from a peer) ───────────────────────────
-    private TcpListener? _tcpServer;
-    private CancellationTokenSource? _serverCts;
-
-    // ── Client state (sending audio to a peer) ───────────────────────────────
-    private Stream? _sendStream;
-    private Stream? _tunnelOwner; // keeps the SSH tunnel alive
 
     // ── Desktop capture ──────────────────────────────────────────────────────
     private WasapiLoopbackCapture? _desktopLoopbackCapture;
@@ -36,7 +24,6 @@ public class AudioStreamingService
 
     // ── Opus codec ───────────────────────────────────────────────────────────
     private OpusEncoder? _sendEncoder;
-    private OpusDecoder? _receiveDecoder;
     private readonly List<short> _sendAccumulator = new();
     private readonly object _sendLock = new();
 
@@ -54,122 +41,6 @@ public class AudioStreamingService
     public bool IsReceiving { get; private set; }
 
     private AudioStreamingService() { }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // SERVER – listens on 127.0.0.1:AudioTunnelPort for incoming TCP audio
-    // ═════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Starts a local TCP server that accepts audio streams from peers.
-    /// Should be called once at app startup (like RemoteControlService.StartServer).
-    /// </summary>
-    public void StartServer(int sampleRate = 48000, int channels = 1)
-    {
-        if (_serverCts != null) return;
-
-        _receiveSampleRate = sampleRate;
-        _receiveChannels = channels;
-
-        _serverCts = new CancellationTokenSource();
-        _tcpServer = new TcpListener(IPAddress.Loopback, AudioTunnelPort);
-
-        try
-        {
-            _tcpServer.Start();
-            _log.Info($"[Audio] TCP server listening on 127.0.0.1:{AudioTunnelPort}");
-
-            _ = Task.Run(async () =>
-            {
-                while (!_serverCts.IsCancellationRequested)
-                {
-                    try
-                    {
-                        var client = await _tcpServer.AcceptTcpClientAsync(_serverCts.Token);
-                        _log.Info("[Audio] Incoming audio connection accepted.");
-                        _ = HandleIncomingAudioAsync(client, _serverCts.Token);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (Exception ex)
-                    {
-                        _log.Warning($"[Audio] Server accept error: {ex.Message}");
-                    }
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[Audio] Failed to start TCP server: {ex.Message}");
-        }
-    }
-
-    public void StopServer()
-    {
-        if (_serverCts == null) return;
-        _serverCts.Cancel();
-        _serverCts.Dispose();
-        _serverCts = null;
-        _tcpServer?.Stop();
-        _tcpServer = null;
-        CleanupPlayback();
-        _log.Info("[Audio] TCP server stopped.");
-    }
-
-    private async Task HandleIncomingAudioAsync(TcpClient client, CancellationToken ct)
-    {
-        client.NoDelay = true; // Disable Nagle's algorithm to prevent latency build-up
-        using (client)
-        {
-            var stream = client.GetStream();
-            _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
-
-            if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
-            {
-                if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.StartPlayback(_receiveSampleRate, _receiveChannels))
-                {
-                    _log.Error("[Audio] Playback bridge is unavailable.");
-                    return;
-                }
-            }
-            else
-            {
-                InitializeDesktopPlayback(_receiveSampleRate, _receiveChannels);
-            }
-
-            IsReceiving = true;
-            _log.Info("[Audio] Receiving audio over TCP tunnel.");
-
-            try
-            {
-                var lenBuf = new byte[4];
-                while (!ct.IsCancellationRequested)
-                {
-                    // Read 4-byte length prefix (big-endian)
-                    int read = await ReadExactAsync(stream, lenBuf, 0, 4, ct);
-                    if (read < 4) break;
-
-                    int packetLen = (lenBuf[0] << 24) | (lenBuf[1] << 16) | (lenBuf[2] << 8) | lenBuf[3];
-                    if (packetLen <= 0 || packetLen > 8000) continue; // sanity check
-
-                    var packetBuf = new byte[packetLen];
-                    read = await ReadExactAsync(stream, packetBuf, 0, packetLen, ct);
-                    if (read < packetLen) break;
-
-                    DecodeAndPlay(packetBuf);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _log.Warning($"[Audio] Receive loop error: {ex.Message}");
-            }
-            finally
-            {
-                IsReceiving = false;
-                CleanupPlayback();
-                _log.Info("[Audio] Incoming audio stream ended.");
-            }
-        }
-    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // SEND – Desktop loopback (system audio) over SSH-tunneled TCP
@@ -211,7 +82,7 @@ public class AudioStreamingService
             bool started = RuntimeBridge.StartSystemAudioCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Linux System audio streaming -> {target.IpAddress} via SSH tunnel"
+                ? $"[Audio] Linux System audio streaming -> {target.IpAddress} via Unified Protocol"
                 : "[Audio] Failed to start system audio capture.");
 
             if (!started) DisconnectSendStream();
@@ -266,7 +137,7 @@ public class AudioStreamingService
         {
             _desktopLoopbackCapture.StartRecording();
             IsSending = true;
-            _log.Info($"[Audio] Desktop system audio streaming -> {target.IpAddress} via SSH tunnel");
+            _log.Info($"[Audio] Desktop system audio streaming -> {target.IpAddress} via Unified Protocol");
             return true;
         }
         catch (Exception ex)
@@ -311,14 +182,14 @@ public class AudioStreamingService
             bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Microphone streaming -> {target.IpAddress} via SSH tunnel"
+                ? $"[Audio] Microphone streaming -> {target.IpAddress} via Unified Protocol"
                 : "[Audio] Failed to start microphone capture.");
 
             if (!started) DisconnectSendStream();
             return started;
         }
 
-        // Desktop (Windows): send via SSH tunnel
+        // Desktop (Windows): send via Unified Protocol
         _desktopMicCapture = new WaveInEvent
         {
             WaveFormat = new WaveFormat(_sendSampleRate, 16, _sendChannels),
@@ -336,7 +207,7 @@ public class AudioStreamingService
         {
             _desktopMicCapture.StartRecording();
             IsSending = true;
-            _log.Info($"[Audio] Desktop microphone streaming -> {target.IpAddress} via SSH tunnel");
+            _log.Info($"[Audio] Desktop microphone streaming -> {target.IpAddress} via Unified Protocol");
             return true;
         }
         catch (Exception ex)
@@ -353,44 +224,18 @@ public class AudioStreamingService
 
     private async Task<bool> ConnectSendStreamAsync(Models.Device target, string pkeyPath, CancellationToken ct)
     {
-        var settings = SettingsService.Instance.Load();
-        if (!settings.PeerUsernames.TryGetValue(target.IpAddress, out var username) || string.IsNullOrEmpty(username))
+        if (UnifiedProtocolClient.Instance.IsConnected)
         {
-            _log.Error($"[Audio] Cannot connect — unpaired device: {target.IpAddress}");
-            return false;
-        }
-
-        int sshPort = 22;
-        if (target.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true ||
-            target.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            sshPort = 2222;
-        }
-
-        try
-        {
-            _tunnelOwner = await SshTunnelService.Instance.CreateTunneledStreamAsync(
-                target.IpAddress, username, pkeyPath, AudioTunnelPort, sshPort, ct);
-
-            _sendStream = _tunnelOwner;
-            _log.Info($"[Audio] SSH tunnel established to {target.IpAddress} for audio.");
+            _log.Info($"[Audio] Using existing Unified connection to {target.IpAddress}");
             return true;
         }
-        catch (Exception ex)
-        {
-            _log.Error($"[Audio] Failed to create SSH tunnel for audio: {ex.Message}");
-            return false;
-        }
+
+        return await UnifiedProtocolClient.Instance.ConnectAsync(target.IpAddress, pkeyPath, ct);
     }
 
     private void DisconnectSendStream()
     {
-        _sendStream = null;
-        if (_tunnelOwner != null)
-        {
-            try { _tunnelOwner.Dispose(); } catch { }
-            _tunnelOwner = null;
-        }
+        // Don't forcefully disconnect if shared
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -446,32 +291,6 @@ public class AudioStreamingService
     // Decode + Play
     // ═════════════════════════════════════════════════════════════════════════
 
-    private void DecodeAndPlay(byte[] opusPacket)
-    {
-        if (_receiveDecoder is null) return;
-
-        short[] pcmBuffer = new short[_receiveFrameMaxSamples()];
-        int decodedSamples = _receiveDecoder.Decode(opusPacket, 0, opusPacket.Length, pcmBuffer, 0, pcmBuffer.Length / _receiveChannels, false);
-        if (decodedSamples <= 0) return;
-
-        int totalSamples = decodedSamples * _receiveChannels;
-        short[] frame = new short[totalSamples];
-        Array.Copy(pcmBuffer, frame, totalSamples);
-
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
-        {
-            RuntimeBridge?.PlayPcm(frame, _receiveSampleRate, _receiveChannels);
-        }
-        else
-        {
-            if (_desktopPlaybackBuffer == null) return;
-            byte[] bytes = Int16ToBytes(frame);
-            _desktopPlaybackBuffer.AddSamples(bytes, 0, bytes.Length);
-        }
-    }
-
-    private int _receiveFrameMaxSamples() => _receiveSampleRate * 2 * _receiveChannels;
-
     private void InitializeDesktopPlayback(int sampleRate, int channels)
     {
         _desktopPlaybackBuffer = new BufferedWaveProvider(new WaveFormat(sampleRate, 16, channels))
@@ -519,52 +338,10 @@ public class AudioStreamingService
 
     private void EncodeAndSendFrames(short[] samples)
     {
-        if (_sendEncoder == null || _sendStream == null || samples.Length == 0) return;
+        if (!UnifiedProtocolClient.Instance.IsConnected || samples.Length == 0) return;
 
-        lock (_sendLock)
-        {
-            _sendAccumulator.AddRange(samples);
-
-            int needed = _sendFrameSize * _sendChannels;
-
-            // LATENCY SHIELD: If we have more than 200ms of audio buffered (10 frames), 
-            // the network/tunnel is too slow. Drop the old data to avoid massive lag and static.
-            if (_sendAccumulator.Count > needed * 10)
-            {
-                _log.Warning($"[Audio] Send buffer backlog detected ({_sendAccumulator.Count} samples). Dropping frames to maintain real-time.");
-                _sendAccumulator.RemoveRange(0, _sendAccumulator.Count - needed);
-            }
-
-            while (_sendAccumulator.Count >= needed)
-            {
-                short[] frame = new short[needed];
-                _sendAccumulator.CopyTo(0, frame, 0, needed);
-                _sendAccumulator.RemoveRange(0, needed);
-
-                byte[] encoded = new byte[4000];
-                int encodedLength = _sendEncoder.Encode(frame, 0, _sendFrameSize, encoded, 0, encoded.Length);
-                if (encodedLength <= 0) continue;
-
-                try
-                {
-                    // Write 4-byte big-endian length prefix
-                    byte[] lenPrefix = new byte[4];
-                    lenPrefix[0] = (byte)((encodedLength >> 24) & 0xFF);
-                    lenPrefix[1] = (byte)((encodedLength >> 16) & 0xFF);
-                    lenPrefix[2] = (byte)((encodedLength >> 8) & 0xFF);
-                    lenPrefix[3] = (byte)(encodedLength & 0xFF);
-
-                    _sendStream.Write(lenPrefix, 0, 4);
-                    _sendStream.Write(encoded, 0, encodedLength);
-                    _sendStream.Flush();
-                }
-                catch (Exception ex)
-                {
-                    _log.Warning($"[Audio] TCP send failed: {ex.Message}");
-                    break;
-                }
-            }
-        }
+        // Note: For simplicity and to match the unified receiver, we send raw PCM directly.
+        _ = UnifiedProtocolClient.Instance.SendAudioFrameAsync(samples, CancellationToken.None);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -654,5 +431,52 @@ public class AudioStreamingService
             || sampleRate == 16000
             || sampleRate == 24000
             || sampleRate == 48000;
+    }
+
+    // === Unified Protocol Integration ===
+
+    /// <summary>
+    /// Initialize unified protocol handlers for audio streaming.
+    /// Call this once at application startup.
+    /// </summary>
+    public void InitializeUnifiedProtocol()
+    {
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.AudioFrame,
+            async (payload, reply, ct) => await HandleAudioFrameUnifiedAsync(payload, ct));
+        
+        _log.Info("[AudioStreaming] Unified protocol handler registered");
+    }
+
+    /// <summary>
+    /// Handle audio frame received via unified protocol.
+    /// Payload is raw PCM samples (16-bit).
+    /// </summary>
+    private async Task HandleAudioFrameUnifiedAsync(byte[] payload, CancellationToken ct)
+    {
+        if (payload.Length == 0) return;
+
+        // Convert byte array to short array (PCM samples)
+        int sampleCount = payload.Length / 2;
+        var samples = new short[sampleCount];
+        Buffer.BlockCopy(payload, 0, samples, 0, payload.Length);
+
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
+        {
+            RuntimeBridge?.PlayPcm(samples, _receiveSampleRate, _receiveChannels);
+        }
+        else
+        {
+            if (_desktopPlaybackBuffer == null)
+            {
+                InitializeDesktopPlayback(_receiveSampleRate, _receiveChannels);
+            }
+            if (_desktopPlaybackBuffer != null)
+            {
+                _desktopPlaybackBuffer.AddSamples(payload, 0, payload.Length);
+            }
+        }
+        
+        await Task.CompletedTask;
     }
 }

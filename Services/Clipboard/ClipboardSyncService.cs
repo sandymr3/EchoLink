@@ -17,14 +17,11 @@ public class ClipboardSyncService
     private static readonly Lazy<ClipboardSyncService> _instance = new(() => new ClipboardSyncService());
     public static ClipboardSyncService Instance => _instance.Value;
 
-    private const int ClipboardSyncPort = 44555; // Strictly internal loopback port for SSH Tunnel
-
     private readonly LoggingService _log = LoggingService.Instance;
     private readonly SettingsService _settings = SettingsService.Instance;
     private readonly ClipboardJournalService _journal = new();
 
     private CancellationTokenSource? _cts;
-    private Task? _listenerTask;
     private Task? _monitorTask;
     private Task? _reliabilityTask;
 
@@ -41,6 +38,17 @@ public class ClipboardSyncService
     public event Action<ClipboardEntry>? ClipboardReceived;
 
     private ClipboardSyncService() { }
+
+    // === Unified Protocol Integration ===
+
+    public void InitializeUnifiedProtocol()
+    {
+        UnifiedProtocol.UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedProtocol.UnifiedMessageType.ClipboardSync,
+            async (payload, reply, ct) => await HandleClipboardSyncAsync(payload, ct));
+        
+        _log.Info("[Clipboard] Unified protocol handler registered");
+    }
 
     // ── Peer-failure helpers ─────────────────────────────────────────────────
 
@@ -76,18 +84,14 @@ public class ClipboardSyncService
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-        // Port 44444 is already exposed by ExposeLocalPortsAsync called from
-        // MainWindowViewModel.InitializeSetupAsync — no need to call it again here.
-
         _localAccountId = await TailscaleService.Instance.GetCurrentAccountIdAsync(_cts.Token)
             ?? "unknown-account";
         _log.Info($"MirrorClip: local account ID = {_localAccountId}");
 
-        _listenerTask = Task.Run(() => RunListenerAsync(_cts.Token), _cts.Token);
         _monitorTask = Task.Run(() => RunMonitorAsync(_cts.Token), _cts.Token);
         _reliabilityTask = Task.Run(() => RunReliabilityLoopAsync(_cts.Token), _cts.Token);
 
-        _log.Info("MirrorClip sync engine started (listener + monitor + reliability loops).");
+        _log.Info("MirrorClip sync engine started (monitor + reliability loops).");
     }
 
     public async Task StopAsync()
@@ -98,8 +102,6 @@ public class ClipboardSyncService
         _cts.Cancel();
         try
         {
-            if (_listenerTask is not null)
-                await _listenerTask;
             if (_monitorTask is not null)
                 await _monitorTask;
             if (_reliabilityTask is not null)
@@ -110,7 +112,6 @@ public class ClipboardSyncService
         {
             _cts.Dispose();
             _cts = null;
-            _listenerTask = null;
             _monitorTask = null;
             _reliabilityTask = null;
         }
@@ -280,47 +281,13 @@ public class ClipboardSyncService
         _log.Debug($"MirrorClip broadcast complete ({peers.Count} peers).");
     }
 
-    private async Task RunListenerAsync(CancellationToken ct)
+    private async Task HandleClipboardSyncAsync(byte[] payload, CancellationToken ct)
     {
-        _log.Info($"MirrorClip listener starting on internal port {ClipboardSyncPort}...");
-        // Critical Security Update: Bind ONLY to `IPAddress.Loopback` (127.0.0.1)
-        // Data can only reach here via an authenticated SSH Tunnel (Local Port Forwarding)
-        var listener = new TcpListener(IPAddress.Loopback, ClipboardSyncPort);
-        listener.Start();
-        _log.Info($"MirrorClip listener bound to 127.0.0.1:{ClipboardSyncPort} (SSH Tunnel target)");
-        ct.Register(() => listener.Stop());
-
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var client = await listener.AcceptTcpClientAsync(ct);
-                _ = Task.Run(() => HandleIncomingClientAsync(client, ct), ct);
-            }
-        }
-        catch (OperationCanceledException) { }
-        catch (SocketException) { }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
-    private async Task HandleIncomingClientAsync(TcpClient client, CancellationToken ct)
-    {
-        using var _ = client;
-        using var stream = client.GetStream();
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-
-        var line = await reader.ReadLineAsync(ct);
-        if (string.IsNullOrWhiteSpace(line))
-            return;
-
+        var json = Encoding.UTF8.GetString(payload);
         ClipboardSyncMessage? message;
         try
         {
-            message = JsonSerializer.Deserialize<ClipboardSyncMessage>(line);
+            message = JsonSerializer.Deserialize<ClipboardSyncMessage>(json);
         }
         catch
         {
@@ -344,14 +311,12 @@ public class ClipboardSyncService
 
         if (_journal.HasEvent(message.EventId))
         {
-            await WriteAckAsync(writer, message.EventId, accepted: true);
             return;
         }
 
         var settings = _settings.Load();
         if (!settings.MirrorClipEnabled)
         {
-            await WriteAckAsync(writer, message.EventId, accepted: false);
             return;
         }
 
@@ -362,8 +327,6 @@ public class ClipboardSyncService
             message.ContentText,
             message.SenderDeviceId,
             DateTime.Now));
-
-        await WriteAckAsync(writer, message.EventId, accepted: true);
 
         _log.Info($"MirrorClip received clip from {message.SenderDeviceId}.");
     }
@@ -456,90 +419,53 @@ public class ClipboardSyncService
         }
     }
 
-    private async Task<bool> SendClipToPeerAsync(string targetIp, ClipboardSyncMessage message, CancellationToken ct)
-    {
-        // 1. We must have their SSH username saved from a previous Pairing via File Transfer.
-        //    Otherwise, we do not know who to log in as silently. 
-        var settings = _settings.Load();
-        if (!settings.PeerUsernames.TryGetValue(targetIp, out string? targetUsername) || string.IsNullOrWhiteSpace(targetUsername))
+        private async Task<bool> SendClipToPeerAsync(string targetIp, ClipboardSyncMessage message, CancellationToken ct)
         {
-            _log.Debug($"MirrorClip Cannot SSH to {targetIp} because their Username pattern is unknown. Pair them once in File Transfer.");
-            return false;
+            // 1. Peer must be paired (we should have a username, though we won't use it for this direct TCP connection)
+            var settings = _settings.Load();
+            if (!settings.PeerUsernames.TryGetValue(targetIp, out string? _) )
+            {
+                _log.Debug($"MirrorClip Cannot sync to {targetIp} because it is not paired.");
+                return false;
+            }
+
+            try
+            {
+                // 2. Connect directly to the Unified Protocol Port (55555) via SOCKS5
+                using var client = await NetworkService.Instance.ConnectViaSocks5Async(
+                    targetIp,
+                    UnifiedProtocol.UnifiedProtocolService.UnifiedPort,
+                    ct);
+
+                if (client == null || !client.Connected)
+                    return false;
+
+                using var stream = client.GetStream();
+
+                var json = JsonSerializer.Serialize(message);
+                var payload = Encoding.UTF8.GetBytes(json);
+
+                // Build header: [Type:1][Length:4 big-endian]
+                var header = new byte[5];
+                header[0] = (byte)UnifiedProtocol.UnifiedMessageType.ClipboardSync;
+                var lengthBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload.Length));
+                Array.Copy(lengthBytes, 0, header, 1, 4);
+
+                await stream.WriteAsync(header, ct);
+                if (payload.Length > 0)
+                {
+                    await stream.WriteAsync(payload, ct);
+                }
+                await stream.FlushAsync(ct);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"MirrorClip: Failed to send to {targetIp} via Unified Protocol: {ex.Message}");
+                return false;
+            }
         }
-
-        string privateKeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
-
-        var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct);
-        var targetDevice = devices?.FirstOrDefault(d => d.IpAddress == targetIp);
-        
-        int sshPort = 22;
-        if (targetDevice?.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true || 
-            targetDevice?.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            sshPort = 2222;
-        }
-
-        // 2. We use the Universal SSH Tunnel to pipe to their local-only 44555 listener.
-        using var stream = await SshTunnelService.Instance.CreateTunneledStreamAsync(
-            targetIp,
-            targetUsername,
-            privateKeyPath,
-            ClipboardSyncPort,
-            sshPort,
-            ct);
-        using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-
-        var json = JsonSerializer.Serialize(message);
-        await writer.WriteLineAsync(json);
-
-        using var ackTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        ackTimeout.CancelAfter(TimeSpan.FromSeconds(5));
-
-        string? ackLine;
-        try
-        {
-            ackLine = await reader.ReadLineAsync(ackTimeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            _log.Debug($"MirrorClip: ACK timeout from {targetIp}");
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(ackLine))
-            return false;
-
-        ClipboardSyncMessage? ack;
-        try
-        {
-            ack = JsonSerializer.Deserialize<ClipboardSyncMessage>(ackLine);
-        }
-        catch
-        {
-            return false;
-        }
-
-        return ack is not null
-            && ack.Type == "ack"
-            && ack.Accepted
-            && string.Equals(ack.AckForEventId, message.EventId, StringComparison.Ordinal);
-    }
-
-    private async Task WriteAckAsync(StreamWriter writer, string eventId, bool accepted)
-    {
-        var ack = new ClipboardSyncMessage
-        {
-            Type = "ack",
-            AckForEventId = eventId,
-            Accepted = accepted,
-            SenderDeviceId = Environment.MachineName,
-            SenderAccountId = _localAccountId,
-            TimestampUtc = DateTime.UtcNow
-        };
-
-        await writer.WriteLineAsync(JsonSerializer.Serialize(ack));
-    }
 
     private void QueuePending(string peerIp, ClipboardSyncMessage message)
     {

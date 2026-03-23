@@ -77,6 +77,7 @@ public class SettingsData
 
     // ── Known SSH Pairings ──
     public Dictionary<string, string> PeerUsernames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> PeerPublicKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Auth State ──
     public bool IsLoggedIn { get; set; }

@@ -1,48 +1,88 @@
-using System.Globalization;
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using EchoLink.Models;
-using Renci.SshNet;
 
 namespace EchoLink.Services;
 
-/// <summary>
-/// Single PowerShell command returns "cpu,totalKB,freeKB" — culture-invariant, no wmic.
-/// Resilient to non-English Windows locales because we control the output format.
-/// </summary>
 public class WindowsTelemetryStrategy : ITelemetryStrategy
 {
-    // Produces e.g. "5,16380584,10234456"
-    private const string Command =
-        "powershell -NoProfile -NonInteractive -Command " +
-        "\"$c=(Get-CimInstance Win32_Processor).LoadPercentage;" +
-        "$m=Get-CimInstance Win32_OperatingSystem;" +
-        "'{0},{1},{2}' -f $c,$m.TotalVisibleMemorySize,$m.FreePhysicalMemory\"";
+    private DateTime _lastUpdate = DateTime.MinValue;
+    private double _lastCpu = 0;
+    private long _lastNetUp = 0;
+    private long _lastNetDown = 0;
 
-    public Task<TelemetrySnapshot> GetSnapshotAsync(SshClient client) =>
-        Task.Run(() =>
+    public async Task<TelemetrySnapshot> GetLocalSnapshotAsync()
+    {
+        return await Task.Run(() =>
         {
             try
             {
-                using var cmd = client.CreateCommand(Command);
-                cmd.CommandTimeout = TimeSpan.FromSeconds(12);
-                var output = cmd.Execute().Trim();
-
-                var parts = output.Split(',');
-                if (parts.Length < 3
-                    || !double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out var cpu)
-                    || !long.TryParse(parts[1].Trim(), out var totalKb)
-                    || !long.TryParse(parts[2].Trim(), out var freeKb))
+                // CPU & RAM using CIM (WMI)
+                var psi = new ProcessStartInfo
                 {
-                    return TelemetrySnapshot.Empty;
+                    FileName = "powershell",
+                    Arguments = "-NoProfile -NonInteractive -Command \"$c=(Get-CimInstance Win32_Processor).LoadPercentage; $m=Get-CimInstance Win32_OperatingSystem; '{0},{1},{2}' -f $c,$m.TotalVisibleMemorySize,$m.FreePhysicalMemory\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                double cpu = 0;
+                long totalRam = 0, freeRam = 0;
+
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc != null)
+                    {
+                        var output = proc.StandardOutput.ReadToEnd().Trim();
+                        proc.WaitForExit();
+                        var parts = output.Split(',');
+                        if (parts.Length == 3)
+                        {
+                            double.TryParse(parts[0], out cpu);
+                            long.TryParse(parts[1], out totalRam);
+                            long.TryParse(parts[2], out freeRam);
+                        }
+                    }
                 }
+
+                // Disk
+                long totalDisk = 0, freeDisk = 0;
+                try
+                {
+                    var drive = DriveInfo.GetDrives().FirstOrDefault(d => d.IsReady && d.Name.StartsWith("C"));
+                    if (drive != null)
+                    {
+                        totalDisk = drive.TotalSize;
+                        freeDisk = drive.AvailableFreeSpace;
+                    }
+                }
+                catch { }
+
+                // Uptime
+                TimeSpan uptime = TimeSpan.FromMilliseconds(Environment.TickCount64);
 
                 return new TelemetrySnapshot(
                     Math.Clamp(cpu, 0, 100),
-                    totalKb * 1024L,
-                    (totalKb - freeKb) * 1024L);
+                    totalRam * 1024L,
+                    (totalRam - freeRam) * 1024L,
+                    totalDisk,
+                    totalDisk - freeDisk,
+                    0, // NetUp (omitted for brevity, can use PerformanceCounter later)
+                    0, // NetDown
+                    -1, // Battery (omitted for brevity)
+                    false, // IsCharging
+                    uptime,
+                    -1 // Temp
+                );
             }
             catch
             {
                 return TelemetrySnapshot.Empty;
             }
         });
+    }
 }

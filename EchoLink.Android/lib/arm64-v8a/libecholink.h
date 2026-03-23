@@ -103,6 +103,8 @@ extern void LogoutNode(void);
 extern char* GetPeerListJson(void);
 extern void StopEchoLinkNode(void);
 extern void SetAudioTargetHost(char* host);
+extern void SetTempSshPassword(char* ip, char* password);
+extern void RemoveTempSshPassword(char* ip);
 
 #ifdef __cplusplus
 }

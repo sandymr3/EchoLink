@@ -40,8 +40,7 @@ public partial class App : Application
             {
                 await ClipboardSyncService.Instance.StopAsync();
                 await AudioStreamingService.Instance.StopAllAsync();
-                AudioStreamingService.Instance.StopServer();
-                RemoteControlService.Instance.StopServer();
+                EchoLink.Services.UnifiedProtocol.UnifiedProtocolService.Instance.StopServer();
                 
                 if (TailscaleService.Instance.IsEphemeralSession)
                 {

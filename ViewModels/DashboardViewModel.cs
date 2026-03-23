@@ -152,10 +152,8 @@ public partial class DashboardViewModel : ViewModelBase
             {
                 _log.Info($"[Dashboard] Claimed pairing PIN. Host IP: {hostData.IpAddress}, Hostname: {hostData.Hostname}");
                 
-                // 1. Save host info to trusted list
-                var settings = SettingsService.Instance.Load();
-                settings.PeerUsernames[hostData.IpAddress] = "echolink-mesh";
-                SettingsService.Instance.Save(settings);
+                // 1. Trust host public key and save info
+                await _pairingService.TrustPublicKeyAsync(hostData.IpAddress, "echolink-mesh", hostData.PublicKey);
 
                 // 2. Send "Pairing Complete" handshake to Host to close their PIN window
                 await _pairingService.SendPairingCompleteAsync(hostData.IpAddress);
@@ -297,11 +295,8 @@ public partial class DashboardViewModel : ViewModelBase
         {
             await _pairingService.EnsureKeyPairAsync();
             var result = await _pairingService.RequestPairingAsync(device.IpAddress, Environment.MachineName, Environment.UserName);
-            if (result.Accepted && !string.IsNullOrWhiteSpace(result.TargetUsername))
+            if (result.Accepted)
             {
-                var settingsData = SettingsService.Instance.Load();
-                settingsData.PeerUsernames[device.IpAddress] = result.TargetUsername;
-                SettingsService.Instance.Save(settingsData);
                 _ = RefreshNetworkAsync();
             }
         }
@@ -315,13 +310,9 @@ public partial class DashboardViewModel : ViewModelBase
 
         try
         {
-            var settingsData = SettingsService.Instance.Load();
-            if (settingsData.PeerUsernames.Remove(device.IpAddress))
-            {
-                SettingsService.Instance.Save(settingsData);
-                _log.Info($"[Dashboard] Unpaired device: {device.Name} ({device.IpAddress})");
-                await RefreshNetworkAsync();
-            }
+            await _pairingService.UntrustPublicKeyAsync(device.IpAddress);
+            _log.Info($"[Dashboard] Unpaired device: {device.Name} ({device.IpAddress})");
+            await RefreshNetworkAsync();
         }
         catch (Exception ex)
         {

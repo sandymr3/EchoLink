@@ -6,7 +6,7 @@ namespace EchoLink.Views;
 
 public partial class ToastWindow : Window
 {
-    private ToastWindow() => InitializeComponent();
+    public ToastWindow() => InitializeComponent();
 
     /// <summary>
     /// Shows a brief toast notification anchored to the bottom-right of <paramref name="owner"/>.
@@ -31,9 +31,12 @@ public partial class ToastWindow : Window
                 double x = ownerBounds.X + ownerBounds.Width  - toast.Width  - 16;
                 double y = ownerBounds.Y + ownerBounds.Height - toast.Height - 48;
                 toast.Position = new PixelPoint((int)x, (int)y);
+                toast.Show(owner);
             }
-
-            toast.Show(owner);
+            else
+            {
+                toast.Show();
+            }
 
             // Auto-dismiss
             _ = Task.Delay(durationMs).ContinueWith(_ =>
