@@ -7,57 +7,249 @@ Secure, SSH-based device-to-device connectivity and sharing across Windows, Linu
 <a href='https://github.com/uganthan2005/EchoLink'><img src='https://img.shields.io/badge/Project-Page-green'></a>
 <a href='https://github.com/uganthan2005/EchoLink/issues'><img src='https://img.shields.io/badge/Contributions-Welcome-blue'></a>
 <a href='https://fossunited.org/hack/2026'><img src='https://img.shields.io/badge/FOSS%20Hack-2026-red'></a>
+
 </div>
 
-> **TL; DR:** EchoLink connects your devices into a private mesh network and uses SSH/SFTP to enable seamless clipboard sync, file transfers, and remote actions between any two online devices—keeping your data entirely off third-party clouds.
+---
 
-## ✨ Overview
-EchoLink is an open-source, cross-platform app designed to make device-to-device connectivity feel effortless while remaining fiercely security-first. Built with C# and Avalonia, it spins up a private tailnet and forces all communication through standard SSH and SFTP, ensuring your data travels directly and securely between your own machines. 
+## What is EchoLink?
 
-**Initial Features:**
-- 📋 **Clipboard Sync:** Instantly push and apply your clipboard across devices.
-- 📁 **File Transfer:** Send and receive files directly via SFTP.
-- 💻 **Remote Actions:** Execute safe commands like locking the screen, shutting down, or restarting a PC right from your phone.
+> **TL;DR:** EchoLink connects your devices into a private mesh network and uses SSH/SFTP to enable seamless clipboard sync, file transfers, remote actions, and system monitoring between any two online devices—keeping your data entirely off third-party clouds.
 
-*More features and automation workflows will be added as the project evolves!*
+### The Problem
 
-## 📑 Todo List
+You have a Windows desktop, a Linux laptop, and an Android phone. You want to:
+- Copy text on your phone and paste it on your desktop
+- Send a file to your laptop without uploading it to some cloud first
+- Lock your desktop from your phone when you're away
+- Use your phone as a microphone for your PC
 
-- [x] Set up the Headscale control server and integrate the private mesh networking.
-- [ ] Build the cross-platform UI and secure, QR-based device pairing.
-- [ ] Develop the core SSH/SFTP features: clipboard sync, file transfers, and remote actions.
-- [ ] Implement the Android background service to keep the mobile device reachable.
-- [ ] Polish the user experience and write quickstart documentation.
+Existing solutions either require cloud services, work only on specific platforms, or need complex network configuration.
 
-## 🛠️ Developer Documentation & Crucial Technical Details
+### The Solution
 
-When contributing to or modifying EchoLink, please keep the following critical architectural decisions and platform-specific constraints in mind:
+EchoLink creates a **private mesh network** between your devices using Tailscale (self-hosted via Headscale). Once connected, devices communicate directly over SSH and a custom TCP protocol—no cloud relays, no third parties, no port forwarding.
 
-### 1. Android Native Mesh Node (Go + tsnet)
-Android explicitly forbids applications from managing the OS routing table (
-etlinkrib) without a dedicated VPN slot or root privileges. 
-- EchoLink bypasses this by embedding Tailscale purely in userspace using 	ailscale.com/tsnet compiled as a C-shared library (libecholink.so).
-- **Do not attempt to use 	un on Android.** The application relies strictly on userspace networking and environment variables (TS_DISABLE_LINUX_ROUTING=true, TS_ANDROID_ALLOW_UNCONFIGURED_ROUTING=true).
-- **String Marshaling:** When making P/Invoke calls from C# to the Go libecholink.so via DllImport, you **MUST** specify CharSet = CharSet.Ansi. Failing to do so will result in corrupted strings being passed to Go.
+```
+┌──────────────┐                    ┌──────────────┐
+│   Windows    │◄──────SSH─────────►│    Linux     │
+│   Desktop    │◄────Port 55555────►│   Laptop     │
+└──────┬───────┘                    └──────┬───────┘
+       │                                   │
+       │         ┌──────────────┐          │
+       └────────►│   Android    │◄─────────┘
+                 │    Phone     │
+                 └──────────────┘
 
-### 2. SOCKS5 Proxy & Traffic Routing
-Because Android runs Tailscale in pure userspace, standard sockets cannot route to the 100.x.y.z Tailscale IP addresses.
-- All outbound traffic (SSH, SFTP, Pairing requests) originating from the Android C# layer **must** be routed through the local SOCKS5 proxy hosted by the Go bridge on 127.0.0.1:1055.
-- Do not attempt to use direct TcpClient connections to Tailscale IPs on Android.
+       All traffic flows over Tailscale mesh (100.x.y.z)
+       No internet required after initial auth
+```
 
-### 3. SSH / SFTP Implementation
-- **Port 2222:** The internal SSH/SFTP server runs on port 2222 over the Tailscale interface. It uses an automatically generated RSA-2048 host key.
-- **In-Memory vs File-System SFTP:** The Android Go bridge uses a real file-system-backed SFTP server (sftp.NewServer). Do not use sftp.InMemHandler(), as incoming files will be discarded.
-- **Android Pathing:** Due to Android's strict file system, incoming files from PCs must be routed to the app's isolated iles/tailscale directory (accessible via GetExternalFilesDir(null)). The C# SftpService automatically intercepts and corrects remote paths to accommodate this.
+---
 
-### 4. Android Scoped Storage (Sending Files)
-Android uses Scoped Storage (URIs like content://...) instead of physical file paths.
-- **Never use TryGetLocalPath() on Android.** It will return 
-ull.
-- Instead, use Avalonia's IStorageFile and call OpenReadAsync() to extract a byte stream. The SftpService utilizes UploadStreamAsync to stream data directly from the URI over the SOCKS5 proxy.
+## ✨ Features
 
-### 5. The Pairing Handshake (Port 44444)
-- Pairing happens completely unauthenticated over a raw TCP socket on port 44444. 
-- **Inbound Bridge:** On Android, because 	snet is isolated, Go/main.go runs a forwarder that listens on the Tailscale mesh for port 44444 and forwards traffic down to the C# listener on 127.0.0.1:44444.
-- **State Persistence:** When a device initiates a pairing request and it is accepted, the initiator **must** immediately save the target's username into SettingsService.Instance.Load().PeerUsernames and save it to disk. Failure to do so will result in the device showing as "Unpaired" upon the next UI refresh.
+### Core
+- 🔐 **Private Mesh Network** - Self-hosted Tailscale via Headscale, zero cloud dependency
+- 📱 **Cross-Platform** - Windows, Linux, Android with consistent UX
+- 🔑 **PIN-Based Pairing** - 6-digit PINs for device pairing, no manual IP entry
+- 🛡️ **SSH Security** - ed25519/RSA key exchange, no passwords
 
+### File & Clipboard
+- 📋 **Clipboard Sync** - Auto-broadcast clipboard changes or manual push (SnapShare)
+- 📁 **File Transfer** - SFTP-based transfer with progress tracking, remote browsing
+- 📤 **Multi-Device Support** - Send to multiple devices simultaneously
+
+### Remote Control & Monitoring
+- 🖱️ **Mouse Control** - Trackpad-style remote mouse movement
+- ⚡ **System Actions** - Lock, restart, shutdown remote devices
+- 📊 **System Monitor** - Real-time CPU, RAM, disk, battery, temperature
+- 🎤 **Audio Streaming** - Two-way audio (use phone as mic, or stream PC audio)
+
+### Automation
+- ⚙️ **Macros** - Custom command buttons synced across devices
+- 🔔 **File Watchers** - Auto-reload macros on changes
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| **UI Framework** | Avalonia UI 11 (cross-platform XAML) |
+| **Language** | C# (.NET 10), Go (Android native bridge) |
+| **Mesh Network** | Tailscale + Headscale (self-hosted) |
+| **File Transfer** | SSH.NET (SFTP over SSH) |
+| **Audio Codec** | Opus (48kHz, low-latency) |
+| **Audio I/O** | NAudio (Windows), Native bridges (Linux/Android) |
+| **Protocol** | Custom TCP on port 55555 + SOCKS5 proxy |
+
+---
+
+## 📑 Project Status
+
+### Completed ✅
+
+- [x] Headscale control server integration (`control.echo-link.app`)
+- [x] Google OIDC authentication with middleware PIN exchange
+- [x] Tailscale daemon with userspace networking + SOCKS5 proxy (port 1055)
+- [x] Cross-platform UI with dashboard, device discovery, QR/PIN pairing
+- [x] SSH key pair generation and bidirectional exchange (port 44444)
+- [x] SFTP file transfer with remote browsing, progress tracking, Android path handling
+- [x] Clipboard sync with MirrorClip (auto), SnapShare (manual), GhostPaste (remote apply)
+- [x] Remote mouse control and system commands (lock/restart/shutdown)
+- [x] System monitoring (CPU/RAM/disk/battery/temp) with 10s polling
+- [x] Two-way audio streaming with Opus encoding, VB-Audio Cable routing
+- [x] Macro system with mesh sync and file watcher auto-reload
+- [x] Android Go bridge with `tsnet`, SSH server on port 2222, native audio capture
+- [x] Unified TCP protocol (port 55555) for all non-SSH features
+- [x] Guest device support with time-limited PINs
+
+### In Progress / Needs Polish 🚧
+
+- [ ] Automated VB-Audio Cable driver installation (Windows)
+- [ ] Linux audio capture bridge (PulseAudio/PipeWire integration)
+- [ ] macOS full support (audio, remote control implementations)
+- [ ] Hotkey registration system (UI exists, backend incomplete)
+- [ ] Mesh topology visualization
+- [ ] Quickstart documentation
+
+### Planned 📋
+
+- [ ] iOS client
+- [ ] LAN-only fallback mode (offline operation)
+- [ ] End-to-end encryption beyond SSH
+- [ ] Network graph visualization
+
+---
+
+## 🏗️ Architecture
+
+### How It Works
+
+**1. Authentication**
+```
+User Login → Google OIDC → JWT → Middleware → Tailscale Auth Key → Daemon Starts
+```
+
+**2. Device Pairing**
+```
+Generate PIN (6-digit) → Middleware API → Other device claims PIN → 
+SSH key exchange (port 44444) → Keys added to authorized_keys → Paired
+```
+
+**3. Communication**
+```
+┌─────────────────────────────────────────────────────┐
+│  App Layer (Clipboard, File Transfer, Remote, etc.) │
+└───────────────────┬─────────────────────────────────┘
+                    │
+         ┌──────────┴──────────┐
+         │                     │
+   ┌─────▼─────┐       ┌──────▼──────┐
+   │   SSH     │       │  Unified    │
+   │  (Port 22)│       │ Protocol    │
+   │  SFTP     │       │ (Port 55555)│
+   └─────┬─────┘       └──────┬──────┘
+         │                    │
+         └──────────┬─────────┘
+                    │
+         ┌──────────▼──────────┐
+         │   SOCKS5 Proxy      │
+         │   (Port 1055)       │
+         │   Tailscale Mesh    │
+         └─────────────────────┘
+```
+
+### Ports & Protocols
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 1055 | SOCKS5 | Tailscale userspace proxy (localhost only) |
+| 22 | SSH/SFTP | Standard SSH (Windows/Linux) |
+| 2222 | SSH/SFTP | Android SSH server |
+| 44444 | TCP | SSH key exchange handshake |
+| 55555 | Custom TCP | Unified protocol (clipboard, remote, audio, monitoring) |
+
+### Platform-Specific Notes
+
+**Android:**
+- Uses Go `tsnet` library for userspace networking (no TUN device)
+- All connections must route through SOCKS5 proxy at `127.0.0.1:1055`
+- SSH runs on port 2222 (not 22)
+- Files saved to `/storage/emulated/0/Download/`
+- Audio capture: microphone only (no system loopback)
+
+**Windows:**
+- Full WASAPI loopback for system audio capture
+- VB-Audio Cable for virtual microphone routing
+- OpenSSH server auto-install with admin rights
+- Best overall support
+
+**Linux:**
+- Uses system OpenSSH server
+- Audio requires manual PulseAudio/PipeWire routing to `EchoLink_Sink`
+- Telemetry reads from `/proc` and `/sys/class/thermal`
+- System commands via `loginctl` and `systemctl`
+
+---
+
+## 📖 Documentation
+
+- **[Quickstart Guide](docs/SETUP.md)** - Get up and running in 5 minutes
+- **[Developer Guide](docs/DEVELOPER.md)** - Architecture deep-dive, building, debugging
+- **[Contributing](docs/CONTRIBUTING.md)** - How to contribute, coding standards
+
+---
+
+## 🚀 Quick Start
+
+```bash
+# Clone
+git clone https://github.com/uganthan2005/EchoLink
+cd EchoLink
+
+# Build (requires .NET 10 SDK)
+dotnet build
+
+# Run
+dotnet run --project EchoLink.csproj
+```
+
+See [docs/SETUP.md](docs/SETUP.md) for detailed setup instructions, Headscale configuration, and first-time pairing guide.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for:
+- Development setup
+- Coding standards
+- Pull request process
+- Areas that need help (Linux audio, macOS support, iOS client)
+
+---
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) file.
+
+---
+
+## 🏆 Built With
+
+- [Avalonia UI](https://avaloniaui.net/) - Cross-platform XAML UI
+- [Tailscale](https://tailscale.com/) - Mesh networking
+- [Headscale](https://github.com/juanfont/headscale) - Self-hosted control server
+- [SSH.NET](https://github.com/sshnet/SSH.NET) - SSH/SFTP library
+- [Opus](https://opus-codec.org/) - Low-latency audio codec
+- [NAudio](https://github.com/naudio/NAudio) - Windows audio I/O
+
+---
+
+<div align="center">
+
+
+Questions? [Open an issue](https://github.com/uganthan2005/EchoLink/issues)
+
+</div>

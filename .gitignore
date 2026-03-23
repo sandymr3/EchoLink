@@ -84,3 +84,4 @@ secrets.json
 headscale_docs
 
 main.go.bak
+!docs/*md
