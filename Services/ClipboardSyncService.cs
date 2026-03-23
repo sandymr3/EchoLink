@@ -17,7 +17,7 @@ public class ClipboardSyncService
     private static readonly Lazy<ClipboardSyncService> _instance = new(() => new ClipboardSyncService());
     public static ClipboardSyncService Instance => _instance.Value;
 
-    private const int ClipboardSyncPort = 44555; // Strictly internal loopback port for SSH Tunnel
+    private const string ClipboardChannel = "clipboard";
 
     private readonly LoggingService _log = LoggingService.Instance;
     private readonly SettingsService _settings = SettingsService.Instance;
@@ -83,11 +83,11 @@ public class ClipboardSyncService
             ?? "unknown-account";
         _log.Info($"MirrorClip: local account ID = {_localAccountId}");
 
-        _listenerTask = Task.Run(() => RunListenerAsync(_cts.Token), _cts.Token);
+        DirectTcpTransportService.Instance.RegisterHandler(ClipboardChannel, HandleIncomingStreamAsync);
         _monitorTask = Task.Run(() => RunMonitorAsync(_cts.Token), _cts.Token);
         _reliabilityTask = Task.Run(() => RunReliabilityLoopAsync(_cts.Token), _cts.Token);
 
-        _log.Info("MirrorClip sync engine started (listener + monitor + reliability loops).");
+        _log.Info($"MirrorClip sync engine started (direct TCP channel '{ClipboardChannel}' + monitor + reliability loops).");
     }
 
     public async Task StopAsync()
@@ -108,6 +108,7 @@ public class ClipboardSyncService
         catch (OperationCanceledException) { }
         finally
         {
+            DirectTcpTransportService.Instance.UnregisterHandler(ClipboardChannel);
             _cts.Dispose();
             _cts = null;
             _listenerTask = null;
@@ -280,36 +281,8 @@ public class ClipboardSyncService
         _log.Debug($"MirrorClip broadcast complete ({peers.Count} peers).");
     }
 
-    private async Task RunListenerAsync(CancellationToken ct)
+    private async Task HandleIncomingStreamAsync(Stream stream, CancellationToken ct)
     {
-        _log.Info($"MirrorClip listener starting on internal port {ClipboardSyncPort}...");
-        // Critical Security Update: Bind ONLY to `IPAddress.Loopback` (127.0.0.1)
-        // Data can only reach here via an authenticated SSH Tunnel (Local Port Forwarding)
-        var listener = new TcpListener(IPAddress.Loopback, ClipboardSyncPort);
-        listener.Start();
-        _log.Info($"MirrorClip listener bound to 127.0.0.1:{ClipboardSyncPort} (SSH Tunnel target)");
-        ct.Register(() => listener.Stop());
-
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var client = await listener.AcceptTcpClientAsync(ct);
-                _ = Task.Run(() => HandleIncomingClientAsync(client, ct), ct);
-            }
-        }
-        catch (OperationCanceledException) { }
-        catch (SocketException) { }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
-    private async Task HandleIncomingClientAsync(TcpClient client, CancellationToken ct)
-    {
-        using var _ = client;
-        using var stream = client.GetStream();
         using var reader = new StreamReader(stream, Encoding.UTF8);
         using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
@@ -458,35 +431,7 @@ public class ClipboardSyncService
 
     private async Task<bool> SendClipToPeerAsync(string targetIp, ClipboardSyncMessage message, CancellationToken ct)
     {
-        // 1. We must have their SSH username saved from a previous Pairing via File Transfer.
-        //    Otherwise, we do not know who to log in as silently. 
-        var settings = _settings.Load();
-        if (!settings.PeerUsernames.TryGetValue(targetIp, out string? targetUsername) || string.IsNullOrWhiteSpace(targetUsername))
-        {
-            _log.Debug($"MirrorClip Cannot SSH to {targetIp} because their Username pattern is unknown. Pair them once in File Transfer.");
-            return false;
-        }
-
-        string privateKeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
-
-        var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct);
-        var targetDevice = devices?.FirstOrDefault(d => d.IpAddress == targetIp);
-        
-        int sshPort = 22;
-        if (targetDevice?.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true || 
-            targetDevice?.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            sshPort = 2222;
-        }
-
-        // 2. We use the Universal SSH Tunnel to pipe to their local-only 44555 listener.
-        using var stream = await SshTunnelService.Instance.CreateTunneledStreamAsync(
-            targetIp,
-            targetUsername,
-            privateKeyPath,
-            ClipboardSyncPort,
-            sshPort,
-            ct);
+        using var stream = await DirectTcpTransportService.Instance.ConnectAsync(targetIp, ClipboardChannel, ct);
         using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
         using var reader = new StreamReader(stream, Encoding.UTF8);
 

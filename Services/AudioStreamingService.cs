@@ -13,18 +13,13 @@ public class AudioStreamingService
 
     private readonly LoggingService _log = LoggingService.Instance;
 
-    // ── TCP Audio Tunnel Port ────────────────────────────────────────────────
-    // This port is used on the SERVER side (127.0.0.1 only).
-    // The sender connects to it through an SSH tunnel (same pattern as RemoteControlService).
-    public const int AudioTunnelPort = 44557;
+    private const string AudioChannel = "audio";
 
     // ── Server state (receiving audio from a peer) ───────────────────────────
-    private TcpListener? _tcpServer;
     private CancellationTokenSource? _serverCts;
 
     // ── Client state (sending audio to a peer) ───────────────────────────────
     private Stream? _sendStream;
-    private Stream? _tunnelOwner; // keeps the SSH tunnel alive
 
     // ── Desktop capture ──────────────────────────────────────────────────────
     private WasapiLoopbackCapture? _desktopLoopbackCapture;
@@ -56,7 +51,7 @@ public class AudioStreamingService
     private AudioStreamingService() { }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SERVER – listens on 127.0.0.1:AudioTunnelPort for incoming TCP audio
+    // SERVER – handles incoming audio channel on shared direct TCP transport
     // ═════════════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -71,35 +66,9 @@ public class AudioStreamingService
         _receiveChannels = channels;
 
         _serverCts = new CancellationTokenSource();
-        _tcpServer = new TcpListener(IPAddress.Loopback, AudioTunnelPort);
 
-        try
-        {
-            _tcpServer.Start();
-            _log.Info($"[Audio] TCP server listening on 127.0.0.1:{AudioTunnelPort}");
-
-            _ = Task.Run(async () =>
-            {
-                while (!_serverCts.IsCancellationRequested)
-                {
-                    try
-                    {
-                        var client = await _tcpServer.AcceptTcpClientAsync(_serverCts.Token);
-                        _log.Info("[Audio] Incoming audio connection accepted.");
-                        _ = HandleIncomingAudioAsync(client, _serverCts.Token);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (Exception ex)
-                    {
-                        _log.Warning($"[Audio] Server accept error: {ex.Message}");
-                    }
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[Audio] Failed to start TCP server: {ex.Message}");
-        }
+        DirectTcpTransportService.Instance.RegisterHandler(AudioChannel, HandleIncomingAudioStreamAsync);
+        _log.Info($"[Audio] Server channel '{AudioChannel}' active on TCP {DirectTcpTransportService.SharedPort}");
     }
 
     public void StopServer()
@@ -108,71 +77,65 @@ public class AudioStreamingService
         _serverCts.Cancel();
         _serverCts.Dispose();
         _serverCts = null;
-        _tcpServer?.Stop();
-        _tcpServer = null;
+        DirectTcpTransportService.Instance.UnregisterHandler(AudioChannel);
         CleanupPlayback();
         _log.Info("[Audio] TCP server stopped.");
     }
 
-    private async Task HandleIncomingAudioAsync(TcpClient client, CancellationToken ct)
+    private async Task HandleIncomingAudioStreamAsync(Stream stream, CancellationToken ct)
     {
-        client.NoDelay = true; // Disable Nagle's algorithm to prevent latency build-up
-        using (client)
+        _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
+
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
         {
-            var stream = client.GetStream();
-            _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
-
-            if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
+            if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.StartPlayback(_receiveSampleRate, _receiveChannels))
             {
-                if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.StartPlayback(_receiveSampleRate, _receiveChannels))
-                {
-                    _log.Error("[Audio] Playback bridge is unavailable.");
-                    return;
-                }
+                _log.Error("[Audio] Playback bridge is unavailable.");
+                return;
             }
-            else
+        }
+        else
+        {
+            InitializeDesktopPlayback(_receiveSampleRate, _receiveChannels);
+        }
+
+        IsReceiving = true;
+        _log.Info("[Audio] Receiving audio over direct TCP channel.");
+
+        try
+        {
+            var lenBuf = new byte[4];
+            while (!ct.IsCancellationRequested)
             {
-                InitializeDesktopPlayback(_receiveSampleRate, _receiveChannels);
+                // Read 4-byte length prefix (big-endian)
+                int read = await ReadExactAsync(stream, lenBuf, 0, 4, ct);
+                if (read < 4) break;
+
+                int packetLen = (lenBuf[0] << 24) | (lenBuf[1] << 16) | (lenBuf[2] << 8) | lenBuf[3];
+                if (packetLen <= 0 || packetLen > 8000) continue; // sanity check
+
+                var packetBuf = new byte[packetLen];
+                read = await ReadExactAsync(stream, packetBuf, 0, packetLen, ct);
+                if (read < packetLen) break;
+
+                DecodeAndPlay(packetBuf);
             }
-
-            IsReceiving = true;
-            _log.Info("[Audio] Receiving audio over TCP tunnel.");
-
-            try
-            {
-                var lenBuf = new byte[4];
-                while (!ct.IsCancellationRequested)
-                {
-                    // Read 4-byte length prefix (big-endian)
-                    int read = await ReadExactAsync(stream, lenBuf, 0, 4, ct);
-                    if (read < 4) break;
-
-                    int packetLen = (lenBuf[0] << 24) | (lenBuf[1] << 16) | (lenBuf[2] << 8) | lenBuf[3];
-                    if (packetLen <= 0 || packetLen > 8000) continue; // sanity check
-
-                    var packetBuf = new byte[packetLen];
-                    read = await ReadExactAsync(stream, packetBuf, 0, packetLen, ct);
-                    if (read < packetLen) break;
-
-                    DecodeAndPlay(packetBuf);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _log.Warning($"[Audio] Receive loop error: {ex.Message}");
-            }
-            finally
-            {
-                IsReceiving = false;
-                CleanupPlayback();
-                _log.Info("[Audio] Incoming audio stream ended.");
-            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Audio] Receive loop error: {ex.Message}");
+        }
+        finally
+        {
+            IsReceiving = false;
+            CleanupPlayback();
+            _log.Info("[Audio] Incoming audio stream ended.");
         }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SEND – Desktop loopback (system audio) over SSH-tunneled TCP
+    // SEND – Desktop loopback (system audio) over direct TCP
     // ═════════════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -211,7 +174,7 @@ public class AudioStreamingService
             bool started = RuntimeBridge.StartSystemAudioCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Linux System audio streaming -> {target.IpAddress} via SSH tunnel"
+                ? $"[Audio] Linux System audio streaming -> {target.IpAddress} via direct TCP"
                 : "[Audio] Failed to start system audio capture.");
 
             if (!started) DisconnectSendStream();
@@ -226,7 +189,7 @@ public class AudioStreamingService
 
         StopSend();
 
-        // 1. Establish SSH tunnel to peer's audio server port
+        // 1. Establish direct TCP stream to peer audio channel
         if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
             return false;
 
@@ -266,7 +229,7 @@ public class AudioStreamingService
         {
             _desktopLoopbackCapture.StartRecording();
             IsSending = true;
-            _log.Info($"[Audio] Desktop system audio streaming -> {target.IpAddress} via SSH tunnel");
+            _log.Info($"[Audio] Desktop system audio streaming -> {target.IpAddress} via direct TCP");
             return true;
         }
         catch (Exception ex)
@@ -278,7 +241,7 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SEND – Microphone over SSH-tunneled TCP
+    // SEND – Microphone over direct TCP
     // ═════════════════════════════════════════════════════════════════════════
 
     /// <summary>
@@ -294,7 +257,7 @@ public class AudioStreamingService
         _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
         _sendEncoder.Bitrate = 24000;
 
-        // Establish the low-latency SSH tunnel (bypasses Windows PC UDP limits)
+        // Establish low-latency direct TCP stream to peer audio channel
         if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
             return false;
 
@@ -311,14 +274,14 @@ public class AudioStreamingService
             bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
-                ? $"[Audio] Microphone streaming -> {target.IpAddress} via SSH tunnel"
+                ? $"[Audio] Microphone streaming -> {target.IpAddress} via direct TCP"
                 : "[Audio] Failed to start microphone capture.");
 
             if (!started) DisconnectSendStream();
             return started;
         }
 
-        // Desktop (Windows): send via SSH tunnel
+        // Desktop (Windows): send via direct TCP
         _desktopMicCapture = new WaveInEvent
         {
             WaveFormat = new WaveFormat(_sendSampleRate, 16, _sendChannels),
@@ -336,7 +299,7 @@ public class AudioStreamingService
         {
             _desktopMicCapture.StartRecording();
             IsSending = true;
-            _log.Info($"[Audio] Desktop microphone streaming -> {target.IpAddress} via SSH tunnel");
+            _log.Info($"[Audio] Desktop microphone streaming -> {target.IpAddress} via direct TCP");
             return true;
         }
         catch (Exception ex)
@@ -348,48 +311,30 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SSH tunnel connection for send path
+    // Direct TCP connection for send path
     // ═════════════════════════════════════════════════════════════════════════
 
     private async Task<bool> ConnectSendStreamAsync(Models.Device target, string pkeyPath, CancellationToken ct)
     {
-        var settings = SettingsService.Instance.Load();
-        if (!settings.PeerUsernames.TryGetValue(target.IpAddress, out var username) || string.IsNullOrEmpty(username))
-        {
-            _log.Error($"[Audio] Cannot connect — unpaired device: {target.IpAddress}");
-            return false;
-        }
-
-        int sshPort = 22;
-        if (target.Os?.Contains("android", StringComparison.OrdinalIgnoreCase) == true ||
-            target.Name?.Contains("android", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            sshPort = 2222;
-        }
-
         try
         {
-            _tunnelOwner = await SshTunnelService.Instance.CreateTunneledStreamAsync(
-                target.IpAddress, username, pkeyPath, AudioTunnelPort, sshPort, ct);
-
-            _sendStream = _tunnelOwner;
-            _log.Info($"[Audio] SSH tunnel established to {target.IpAddress} for audio.");
+            _sendStream = await DirectTcpTransportService.Instance.ConnectAsync(target.IpAddress, AudioChannel, ct);
+            _log.Info($"[Audio] Direct TCP stream established to {target.IpAddress} for audio.");
             return true;
         }
         catch (Exception ex)
         {
-            _log.Error($"[Audio] Failed to create SSH tunnel for audio: {ex.Message}");
+            _log.Error($"[Audio] Failed to create direct TCP stream for audio: {ex.Message}");
             return false;
         }
     }
 
     private void DisconnectSendStream()
     {
-        _sendStream = null;
-        if (_tunnelOwner != null)
+        if (_sendStream != null)
         {
-            try { _tunnelOwner.Dispose(); } catch { }
-            _tunnelOwner = null;
+            try { _sendStream.Dispose(); } catch { }
+            _sendStream = null;
         }
     }
 
