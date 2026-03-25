@@ -14,9 +14,6 @@ namespace EchoLink;
 
 public partial class App : Application
 {
-    // Global reference for the Android custom browser interceptor
-    public static Duende.IdentityModel.OidcClient.Browser.IBrowser? AndroidBrowserInstance { get; set; }
-    
     // Global reference for Android Activity to allow bridge to start/stop services
     public static object? AndroidActivityInstance { get; set; }
 
@@ -30,6 +27,30 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         DisableAvaloniaDataAnnotationValidation();
+
+        if (ApplicationLifetime is IActivatableLifetime activatableLifetime)
+        {
+            activatableLifetime.Activated += async (sender, args) =>
+            {
+                if (args.Kind == ActivationKind.OpenUri && args is ProtocolActivatedEventArgs protocolArgs)
+                {
+                    var uri = protocolArgs.Uri;
+                    _log.Info($"[DeepLink] Received URI: {uri}");
+                    
+                    if (uri.Scheme == "echolink" && uri.Host == "login")
+                    {
+                        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                        var authKey = query["authkey"];
+                        
+                        if (!string.IsNullOrEmpty(authKey))
+                        {
+                            _log.Info($"[DeepLink] Captured Pre-Auth Key. Logging in...");
+                            await PerformDeepLinkLogin(authKey);
+                        }
+                    }
+                }
+            };
+        }
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -139,6 +160,48 @@ public partial class App : Application
                 singleView.MainView = new LoginView { DataContext = vm };
             }
         });
+    }
+
+    public async Task HandleDeepLink(Uri uri)
+    {
+        _log.Info($"[DeepLink] Manual handler received URI: {uri}");
+        if (uri.Scheme == "echolink" && uri.Host == "login")
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var authKey = query["authkey"];
+            
+            if (!string.IsNullOrEmpty(authKey))
+            {
+                 _log.Info($"[DeepLink] Captured Pre-Auth Key. Logging in...");
+                 await PerformDeepLinkLogin(authKey);
+            }
+        }
+    }
+
+    private async Task PerformDeepLinkLogin(string authKey)
+    {
+        try
+        {
+            _log.Info("[DeepLink] Starting Tailscale daemon with key...");
+            // Ensure we are on UI thread if needed, but StartDaemonAsync is async.
+            // NavigateToMain needs to be on UI thread (it handles that internally).
+
+            await TailscaleService.Instance.StartDaemonAsync(authKey, false);
+
+            var settings = SettingsService.Instance.Load();
+            settings.IsLoggedIn = true;
+            SettingsService.Instance.Save(settings);
+
+            _log.Info("[DeepLink] Login successful. Navigating to Dashboard.");
+            if (ApplicationLifetime != null)
+            {
+                NavigateToMain(ApplicationLifetime);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[DeepLink] Login failed: {ex.Message}");
+        }
     }
 
     private void DisableAvaloniaDataAnnotationValidation()

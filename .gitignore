@@ -79,7 +79,7 @@ Desktop.ini
 # MD files
 *.md
 
-Echolink-middleware
+EchoLink-middleware
 secrets.json
 headscale_docs
 

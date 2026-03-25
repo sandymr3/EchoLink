@@ -90,52 +90,35 @@ public partial class LoginViewModel : ViewModelBase
 
         try
         {
-            EchoLink.Services.Auth.AuthService authService;
+            var authService = new EchoLink.Services.Auth.AuthService();
+
+            // 1. Trigger the browser login flow
+            // On Android: Opens browser and returns null (waiting for deep link)
+            // On PC: Opens browser, waits for localhost redirect, returns Auth Key
+            var authKey = await authService.LoginAsync();
 
             if (OperatingSystem.IsAndroid())
             {
-                // Uses the AndroidBrowser instance registered in MainActivity.cs
-                string redirectUri = "https://echo-link.app/oidc/callback";
-                
-                if (App.AndroidBrowserInstance == null)
-                    throw new InvalidOperationException("AndroidBrowserInstance is not registered.");
-                    
-                authService = new EchoLink.Services.Auth.AuthService(App.AndroidBrowserInstance, redirectUri);
-            }
-            else
-            {
-                // Uses the Custom Loopback Listener on Port 5000 for Desktop
-                string redirectUri = "http://127.0.0.1:5000/";
-                authService = new EchoLink.Services.Auth.AuthService(new EchoLink.Services.Auth.SystemBrowser(5000), redirectUri);
-            }
-
-            // 1. Trigger the browser popup / Custom Tab and get the JWT
-            var jwt = await authService.LoginAsync();
-
-            if (string.IsNullOrEmpty(jwt))
-            {
-                StatusText = "Login returned empty token.";
+                // Android flow continues via Deep Link (App.axaml.cs)
+                StatusText = "Please complete login in the browser...";
+                IsLoading = false; // We can stop loading indicator or keep it? 
+                // Better to stop it so user knows they need to switch apps.
+                // But deep link will restart the app or resume it.
                 return;
             }
 
-            StatusText = "Authenticating with EchoLink Control Plane...";
-            _log.Info("[Login] Google JWT received successfully.");
-
-            // 2. Exchange JWT with the Go Middleware for a Tailscale Pre-Auth Key
-            var preAuthKey = await EchoLink.Services.Auth.MiddlewareClient.Instance.ExchangeJwtForPreAuthKeyAsync(jwt);
-            
-            if (string.IsNullOrEmpty(preAuthKey))
+            if (string.IsNullOrEmpty(authKey))
             {
-                StatusText = "Failed to obtain Pre-Auth Key from Middleware.";
+                StatusText = "Login returned empty key.";
                 return;
             }
 
             StatusText = "Connecting to the Tailnet mesh...";
             _log.Info("[Login] Pre-Auth Key obtained, starting Tailscale node...");
 
-            // 3. Start Tailscale using the obtained Pre-Auth Key.
+            // 2. Start Tailscale using the obtained Pre-Auth Key.
             // Ecosystem node (not ephemeral) for standard login
-            await TailscaleService.Instance.StartDaemonAsync(preAuthKey, false, ct);
+            await TailscaleService.Instance.StartDaemonAsync(authKey, false, ct);
 
             // Persist the login state
             var settings = SettingsService.Instance.Load();

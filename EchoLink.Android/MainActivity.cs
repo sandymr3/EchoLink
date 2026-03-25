@@ -14,26 +14,12 @@ namespace EchoLink.Android;
     Theme = "@style/MyTheme.NoActionBar",
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode,
     LaunchMode = LaunchMode.SingleTask)]
-#pragma warning disable CA1416
 public class MainActivity : AvaloniaMainActivity<App>
 {
     protected override void OnCreate(Bundle? savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
         global::Android.Util.Log.Info("EchoLink", "MainActivity OnCreate");
-
-        // Register the activity instance
-        EchoLink.App.AndroidActivityInstance = this;
-
-        // Register the native bridge implementation
-        EchoLink.Services.TailscaleService.Instance.NativeBridge = new AndroidNativeMeshBridge();
-        EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new AndroidAudioRuntimeBridge();
-
-        // Register the Android Browser globally so the Shared project can access it
-        EchoLink.App.AndroidBrowserInstance = new EchoLink.Android.Auth.AndroidBrowser();
-
-        // REMOVED: Premature StartMeshService call. 
-        // We will only start the service when we have an AuthKey during login.
 
         // Request notification and storage permissions for Android
         var permissions = new System.Collections.Generic.List<string>();
@@ -91,14 +77,36 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override void OnNewIntent(Intent? intent)
     {
         base.OnNewIntent(intent);
-
+        
         if (intent?.Action == Intent.ActionView && intent.DataString != null)
         {
-            if (intent.DataString.StartsWith("https://echo-link.app/oidc/callback"))
+            global::Android.Util.Log.Info("EchoLink", $"Deep Link intercepted: {intent.DataString}");
+            
+            // Manually parse and trigger the login logic if it looks like our deep link
+            // This acts as a fallback if Avalonia's Activated event doesn't fire for OnNewIntent
+            var uri = new System.Uri(intent.DataString);
+            if (uri.Scheme == "echolink" && uri.Host == "login")
             {
-                global::Android.Util.Log.Info("EchoLink", $"OIDC Callback intercepted: {intent.DataString}");
-                // Unblock the login flow by passing the callback URL
-                EchoLink.Android.Auth.AndroidBrowser.TaskCompletionSource?.TrySetResult(intent.DataString);
+                 global::Android.Util.Log.Info("EchoLink", "Manual deep link handling triggered.");
+                 var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                 var authKey = query["authkey"];
+                 
+                 if (!string.IsNullOrEmpty(authKey))
+                 {
+                     // We need to run this on the UI thread or ensure thread safety
+                     Avalonia.Threading.Dispatcher.UIThread.Post(async () => {
+                         // Find the App instance and call a public method to finish login
+                         if (Avalonia.Application.Current is App app)
+                         {
+                             // We can expose PerformDeepLinkLogin as internal/public or use reflection, 
+                             // but for now let's just use the existing plumbing if possible.
+                             // Since 'PerformDeepLinkLogin' is private in App.axaml.cs, we might need to expose it.
+                             
+                             // Actually, let's just create a helper method in App.axaml.cs
+                             await app.HandleDeepLink(uri);
+                         }
+                     });
+                 }
             }
         }
     }
@@ -106,24 +114,16 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override void OnResume()
     {
         base.OnResume();
-        
-        // If the user manually navigated back to the app without an intent (e.g. they backed out of the browser),
-        // we should eventually timeout the task so the UI doesn't hang forever.
-        // We'll give them a short grace period in case the intent is still processing.
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(1500); // Wait 1.5 seconds to see if OnNewIntent fires
-            if (EchoLink.Android.Auth.AndroidBrowser.TaskCompletionSource != null && 
-                !EchoLink.Android.Auth.AndroidBrowser.TaskCompletionSource.Task.IsCompleted)
-            {
-                global::Android.Util.Log.Info("EchoLink", "User returned to app without OIDC intent. Cancelling login flow.");
-                EchoLink.Android.Auth.AndroidBrowser.TaskCompletionSource.TrySetCanceled();
-            }
-        });
     }
 
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
+        // Register dependencies early so they are available during App initialization
+        EchoLink.App.AndroidActivityInstance = this;
+        EchoLink.Services.TailscaleService.Instance.NativeBridge = new AndroidNativeMeshBridge();
+        EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new AndroidAudioRuntimeBridge();
+        EchoLink.Services.Auth.AuthService.PlatformHandler = new EchoLink.Android.Auth.AndroidAuthPlatformHandler();
+
         return base.CustomizeAppBuilder(builder)
             .WithInterFont();
     }
