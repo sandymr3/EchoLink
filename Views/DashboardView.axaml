@@ -244,27 +244,33 @@
 
                     <!-- Status -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                        <!-- Paired Status + Unpair Action -->
-                        <StackPanel Orientation="Horizontal" IsVisible="{Binding IsPaired}" Spacing="4">
-                            <Border Background="#2010B981" CornerRadius="4" Padding="4,2">
-                                <TextBlock Text="🔒 Paired" FontSize="10" FontWeight="SemiBold" Foreground="#10B981"/>
-                            </Border>
+                        <!-- Paired Status -->
+                        <Border IsVisible="{Binding IsPaired}" Background="#2010B981" CornerRadius="4" Padding="4,2">
+                            <TextBlock Text="🔒 Paired" FontSize="10" FontWeight="SemiBold" Foreground="#10B981"/>
+                        </Border>
+                        
+                        <!-- Actions -->
+                        <StackPanel Orientation="Horizontal" IsVisible="{Binding !IsSelf}" Spacing="4">
                             <Button Classes="Danger"
-                                    IsVisible="{Binding !IsSelf}"
+                                    IsVisible="{Binding IsPaired}"
                                     x:CompileBindings="False"
                                     Command="{Binding $parent[UserControl].DataContext.UnpairDeviceCommand}"
                                     CommandParameter="{Binding}"
                                     Background="Transparent"
                                     Padding="4,2"
-                                    ToolTip.Tip="Remove device">
+                                    ToolTip.Tip="Untrust device">
+                                <TextBlock Text="🔓" FontSize="10"/>
+                            </Button>
+                            <Button Classes="Danger"
+                                    x:CompileBindings="False"
+                                    Command="{Binding $parent[UserControl].DataContext.RemoveDeviceCommand}"
+                                    CommandParameter="{Binding}"
+                                    Background="Transparent"
+                                    Padding="4,2"
+                                    ToolTip.Tip="Remove node from network">
                                 <TextBlock Text="🗑️" FontSize="10"/>
                             </Button>
                         </StackPanel>
-                        
-                        <Button IsVisible="{Binding !IsPaired}" IsEnabled="{Binding IsOnline}" x:CompileBindings="False"
-                                Command="{Binding $parent[UserControl].DataContext.PairDeviceCommand}"
-                                CommandParameter="{Binding}"
-                                Content="🔗 Pair" Padding="8,2" Margin="0,0,8,0" CornerRadius="4" FontSize="10" FontWeight="Bold" Background="#2000E5FF" Foreground="#00E5FF"/>
 
                         <Ellipse Width="8" Height="8" Fill="{Binding IsOnline, Converter={StaticResource MeshStatusColor}}"/>
                         <TextBlock Text="{Binding StatusLabel}" FontSize="12" Foreground="{Binding IsOnline, Converter={StaticResource MeshStatusColor}}"/>

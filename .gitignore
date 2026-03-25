@@ -82,6 +82,6 @@ Desktop.ini
 EchoLink-middleware
 secrets.json
 headscale_docs
-
+Echolink-middleware
 main.go.bak
 !docs/*md

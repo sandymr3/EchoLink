@@ -214,7 +214,7 @@ public class ClipboardSyncService
         var settings = _settings.Load();
         var hash = ComputeHash(text);
 
-        var (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct);
+        var (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct: ct);
         var sender = selfIp ?? Environment.MachineName;
         var accountId = await TailscaleService.Instance.GetCurrentAccountIdAsync(ct)
             ?? _localAccountId;
@@ -479,7 +479,7 @@ public class ClipboardSyncService
         {
             try
             {
-                var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct);
+                var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync(ct: ct);
                 var settings = _settings.Load();
                 var onlinePeers = GetEligibleClipboardPeers(devices, settings)
                     .Select(d => d.IpAddress)

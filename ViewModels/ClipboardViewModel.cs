@@ -77,7 +77,8 @@ public partial class ClipboardViewModel : ViewModelBase
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool useTargetSelection = settings.ClipboardUseTargetSelection;
 
-            foreach (var d in devices.Where(d => !d.IsSelf && !string.IsNullOrWhiteSpace(d.IpAddress)))
+            // Only show devices that are paired (in the user's account or explicitly trusted)
+            foreach (var d in devices.Where(d => !d.IsSelf && d.IsPaired && !string.IsNullOrWhiteSpace(d.IpAddress)))
             {
                 var item = new ClipboardShareDevice
                 {

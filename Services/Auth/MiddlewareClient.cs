@@ -60,6 +60,12 @@ public class MiddlewareClient
         public string Hostname { get; set; } = "";
     }
 
+    private class DeleteNodeRequest
+    {
+        [JsonPropertyName("ip_address")]
+        public string IpAddress { get; set; } = "";
+    }
+
     public async Task<string?> ExchangeJwtForPreAuthKeyAsync(string jwt)
     {
         try
@@ -174,6 +180,30 @@ public class MiddlewareClient
         {
             LoggingService.Instance.Error($"[Middleware] Exception claiming pairing PIN: {ex.Message}");
             return null;
+        }
+    }
+
+    public async Task<bool> DeleteNodeAsync(string ipAddress)
+    {
+        try
+        {
+            var request = new DeleteNodeRequest { IpAddress = ipAddress };
+            var response = await _httpClient.PostAsJsonAsync("/auth/node/delete", request);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                LoggingService.Instance.Error($"[Middleware] Failed to delete node. Status: {response.StatusCode}, Body: {errorBody}");
+                return false;
+            }
+
+            LoggingService.Instance.Info($"[Middleware] Successfully deleted node: {ipAddress}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LoggingService.Instance.Error($"[Middleware] Exception deleting node: {ex.Message}");
+            return false;
         }
     }
 }

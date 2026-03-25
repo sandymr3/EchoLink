@@ -41,7 +41,13 @@ public partial class DashboardViewModel : ViewModelBase
         _pairingService.PairingCompleted += OnPairingCompleted;
         
         _log.Info("Dashboard initialized.");
-        _ = RefreshNetworkAsync();
+        _ = InitializeDashboardAsync();
+    }
+
+    private async Task InitializeDashboardAsync()
+    {
+        await TailscaleService.Instance.CleanupDuplicateNodesAsync();
+        await RefreshNetworkAsync();
     }
 
     private void OnPairingCompleted()
@@ -284,23 +290,24 @@ public partial class DashboardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task PairDeviceAsync(Device device)
+    private async Task RemoveDeviceAsync(Device device)
     {
         if (device == null || string.IsNullOrWhiteSpace(device.IpAddress) || device.IsSelf) 
             return;
 
-        if (!device.IsOnline) return;
-
         try
         {
-            await _pairingService.EnsureKeyPairAsync();
-            var result = await _pairingService.RequestPairingAsync(device.IpAddress, Environment.MachineName, Environment.UserName);
-            if (result.Accepted)
+            _log.Info($"[Dashboard] Manually removing device: {device.Name} ({device.IpAddress})");
+            bool success = await TailscaleService.Instance.RemoveNodeAsync(device.IpAddress);
+            if (success)
             {
-                _ = RefreshNetworkAsync();
+                await RefreshNetworkAsync();
             }
         }
-        catch (Exception ex) { _log.Error($"Pairing error: {ex.Message}"); }
+        catch (Exception ex) 
+        { 
+            _log.Error($"[Dashboard] Remove error: {ex.Message}"); 
+        }
     }
 
     [RelayCommand]

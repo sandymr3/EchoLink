@@ -504,7 +504,7 @@ public class TailscaleService
     }
 
     public async Task<(string? SelfIp, System.Collections.Generic.List<Models.Device> Devices)>
-        GetNetworkStatusAsync(CancellationToken ct = default)
+        GetNetworkStatusAsync(bool deduplicate = true, CancellationToken ct = default)
     {
         if (OperatingSystem.IsAndroid())
         {
@@ -532,6 +532,12 @@ public class TailscaleService
             {
                 _log.Error($"[Tailscale] Android peer parse failed: {ex.Message}");
             }
+
+            if (deduplicate)
+            {
+                androidDevices = DeduplicateDevices(androidDevices);
+            }
+
             return (GetAndroidNativeIp(), androidDevices);
         }
 
@@ -563,11 +569,34 @@ public class TailscaleService
                 foreach (var peer in peers.EnumerateObject())
                     devices.Add(ParseDevice(peer.Value, isSelf: false, settingsData));
             }
+
+            if (deduplicate)
+            {
+                devices = DeduplicateDevices(devices);
+            }
         }
         catch (Exception ex) { _log.Error($"[Tailscale] Failed to parse status: {ex.Message}"); }
 
         return (selfIp, devices);
     }
+
+    private System.Collections.Generic.List<Models.Device> DeduplicateDevices(System.Collections.Generic.List<Models.Device> devices)
+    {
+        var cleanDevices = new System.Collections.Generic.List<Models.Device>();
+        var selfDevice = devices.FirstOrDefault(d => d.IsSelf);
+        if (selfDevice != null) cleanDevices.Add(selfDevice);
+
+        var groupedPeers = devices.Where(d => !d.IsSelf && !string.IsNullOrEmpty(d.Name)).GroupBy(d => d.Name);
+        foreach (var group in groupedPeers)
+        {
+            var mostRecent = group.OrderByDescending(d => d.LastSeen ?? DateTime.MinValue).First();
+            cleanDevices.Add(mostRecent);
+        }
+        
+        cleanDevices.AddRange(devices.Where(d => !d.IsSelf && string.IsNullOrEmpty(d.Name)));
+        return cleanDevices;
+    }
+
 
     private static string? ExtractIpv4(JsonElement node)
     {
@@ -587,7 +616,8 @@ public class TailscaleService
         bool online = node.TryGetProperty("Online", out var onEl) && onEl.GetBoolean();
         string ip = ExtractIpv4(node) ?? "";
         string userId = node.TryGetProperty("UserID", out var uid) ? uid.ValueKind == JsonValueKind.Number ? uid.GetInt64().ToString() : uid.GetString() ?? "" : "";
-        
+        string nodeId = node.TryGetProperty("ID", out var idEl) ? idEl.GetString() ?? "" : "";
+
         var tags = new List<string>();
         if (node.TryGetProperty("Tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array)
         {
@@ -606,14 +636,14 @@ public class TailscaleService
             _ => "Desktop"
         };
 
-        string lastSeen = "";
+        DateTime? lastSeen = null;
         if (node.TryGetProperty("LastSeen", out var ls) && DateTime.TryParse(ls.GetString(), out var dt))
         {
             if (!online && (DateTime.UtcNow - dt).TotalMinutes <= 10)
             {
                 online = true;
             }
-            lastSeen = dt.ToLocalTime().ToString("g");
+            lastSeen = dt;
         }
 
         bool isPaired = isSelf || (settingsData.PeerUsernames != null && settingsData.PeerUsernames.ContainsKey(ip));
@@ -621,6 +651,7 @@ public class TailscaleService
         return new Models.Device
         {
             Name = hostName,
+            NodeId = nodeId,
             IpAddress = ip,
             IsOnline = online,
             DeviceType = deviceType,
@@ -632,6 +663,54 @@ public class TailscaleService
             Tags = tags
         };
     }
+
+    public async Task<bool> RemoveNodeAsync(string ipAddress)
+    {
+        _log.Info($"[Tailscale] Attempting to remove node with IP: {ipAddress}");
+        
+        bool success = await Auth.MiddlewareClient.Instance.DeleteNodeAsync(ipAddress);
+        
+        // Removed `tailscale logout <ip>` because the CLI does not support logging out specific peers from the client side,
+        // it just ignores the IP argument and logs the local machine out! Headscale deletion is sufficient.
+        
+        return success;
+    }
+
+    public async Task CleanupDuplicateNodesAsync()
+    {
+        _log.Info("[Tailscale] Starting duplicate node cleanup...");
+        try
+        {
+            var (_, devices) = await GetNetworkStatusAsync(deduplicate: false);
+            if (devices == null || devices.Count == 0) return;
+
+            // Group by Name, keeping only the ones that have a LastSeen value just to be safe
+            var groupedDevices = devices
+                .Where(d => !d.IsSelf && !string.IsNullOrEmpty(d.Name))
+                .GroupBy(d => d.Name)
+                .Where(g => g.Count() > 1);
+
+            foreach (var group in groupedDevices)
+            {
+                // Find the most recently seen device
+                var mostRecent = group.OrderByDescending(d => d.LastSeen ?? DateTime.MinValue).First();
+                
+                _log.Info($"[Tailscale] Found {group.Count()} devices named '{group.Key}'. Keeping IP: {mostRecent.IpAddress} (LastSeen: {mostRecent.LastSeen})");
+
+                // Remove all others
+                foreach (var device in group.Where(d => d.IpAddress != mostRecent.IpAddress))
+                {
+                    _log.Info($"[Tailscale] Cleanup: Removing duplicate node {device.Name} with IP {device.IpAddress}");
+                    await RemoveNodeAsync(device.IpAddress);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[Tailscale] Cleanup failed: {ex.Message}");
+        }
+    }
+
 public async Task LoginAsync(Action<string> onAuthUrl, CancellationToken ct = default)
 {
     if (OperatingSystem.IsAndroid())
