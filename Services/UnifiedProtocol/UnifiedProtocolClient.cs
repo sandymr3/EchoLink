@@ -71,6 +71,8 @@ public class UnifiedProtocolClient
                 return false;
             }
 
+            _tcpClient.NoDelay = true;
+
             _stream = _tcpClient.GetStream();
             _log.Info($"[Unified] Connected to {targetIp}:{UnifiedProtocolService.UnifiedPort}");
             

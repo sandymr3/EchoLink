@@ -33,6 +33,9 @@ public class AudioStreamingService
 
     private int _receiveSampleRate = 48000;
     private int _receiveChannels = 1;
+    private int _receiveFrameSize = 960;
+    private OpusDecoder? _receiveDecoder;
+    private bool _runtimePlaybackStarted;
 
     // ── Android bridge ───────────────────────────────────────────────────────
     public IAudioRuntimeBridge? RuntimeBridge { get; set; }
@@ -43,13 +46,13 @@ public class AudioStreamingService
     private AudioStreamingService() { }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SEND – Desktop loopback (system audio) over SSH-tunneled TCP
+    // SEND – Desktop loopback (system audio) over Unified Protocol
     // ═════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Captures desktop system audio (loopback) and sends it over an SSH-tunneled TCP stream.
+    /// Captures desktop system audio (loopback) and sends it over the unified protocol stream.
     /// </summary>
-    public async Task<bool> StartLoopbackSendAsync(Models.Device target, string pkeyPath, CancellationToken ct = default)
+    public async Task<bool> StartLoopbackSendAsync(Models.Device target, CancellationToken ct = default)
     {
         if (OperatingSystem.IsAndroid())
         {
@@ -67,7 +70,7 @@ public class AudioStreamingService
             _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
             _sendEncoder.Bitrate = 48000;
 
-            if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
+            if (!await ConnectSendStreamAsync(target, ct))
                 return false;
 
             if (RuntimeBridge is null || !RuntimeBridge.IsAvailable || !RuntimeBridge.CanCaptureSystemAudio)
@@ -97,8 +100,8 @@ public class AudioStreamingService
 
         StopSend();
 
-        // 1. Establish SSH tunnel to peer's audio server port
-        if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
+        // 1. Establish unified protocol connection to peer audio handler
+        if (!await ConnectSendStreamAsync(target, ct))
             return false;
 
         // 2. Set up loopback capture
@@ -149,13 +152,13 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SEND – Microphone over SSH-tunneled TCP
+    // SEND – Microphone over Unified Protocol
     // ═════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Captures microphone audio and sends it over an SSH-tunneled TCP stream.
+    /// Captures microphone audio and sends it over the unified protocol stream.
     /// </summary>
-    public async Task<bool> StartMicrophoneSendAsync(Models.Device target, string pkeyPath, CancellationToken ct = default)
+    public async Task<bool> StartMicrophoneSendAsync(Models.Device target, CancellationToken ct = default)
     {
         StopSend();
 
@@ -165,8 +168,8 @@ public class AudioStreamingService
         _sendEncoder = OpusEncoder.Create(_sendSampleRate, _sendChannels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
         _sendEncoder.Bitrate = 24000;
 
-        // Establish the low-latency SSH tunnel (bypasses Windows PC UDP limits)
-        if (!await ConnectSendStreamAsync(target, pkeyPath, ct))
+        // Establish the low-latency unified connection over the mesh
+        if (!await ConnectSendStreamAsync(target, ct))
             return false;
 
         if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
@@ -178,7 +181,7 @@ public class AudioStreamingService
                 return false;
             }
 
-            // Stream PCM direct into the TCP tunnel instead of using local UDP
+            // Stream PCM into unified protocol frames
             bool started = RuntimeBridge.StartMicrophoneCapture(samples => EncodeAndSendFrames(samples), _sendSampleRate, _sendChannels);
             IsSending = started;
             _log.Info(started
@@ -219,10 +222,10 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // SSH tunnel connection for send path
+    // Unified connection for send path
     // ═════════════════════════════════════════════════════════════════════════
 
-    private async Task<bool> ConnectSendStreamAsync(Models.Device target, string pkeyPath, CancellationToken ct)
+    private async Task<bool> ConnectSendStreamAsync(Models.Device target, CancellationToken ct)
     {
         if (UnifiedProtocolClient.Instance.IsConnected)
         {
@@ -230,7 +233,11 @@ public class AudioStreamingService
             return true;
         }
 
-        return await UnifiedProtocolClient.Instance.ConnectAsync(target.IpAddress, pkeyPath, ct);
+        return await UnifiedProtocolClient.Instance.ConnectAsync(
+            target.IpAddress,
+            UnifiedProtocolService.UnifiedPort,
+            NetworkService.TailscaleSocks5Port,
+            ct);
     }
 
     private void DisconnectSendStream()
@@ -248,6 +255,7 @@ public class AudioStreamingService
         {
             RuntimeBridge?.StopMicrophoneCapture();
             RuntimeBridge?.StopSystemAudioCapture();
+            RuntimeBridge?.StopPlayback();
         }
 
         if (_desktopLoopbackCapture != null)
@@ -265,6 +273,8 @@ public class AudioStreamingService
         }
 
         _sendEncoder = null;
+        _receiveDecoder = null;
+        _runtimePlaybackStarted = false;
 
         lock (_sendLock)
         {
@@ -333,15 +343,38 @@ public class AudioStreamingService
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // Encode + Send (TCP — length-prefixed frames)
+    // Encode + Send (Opus frames in unified protocol messages)
     // ═════════════════════════════════════════════════════════════════════════
 
     private void EncodeAndSendFrames(short[] samples)
     {
-        if (!UnifiedProtocolClient.Instance.IsConnected || samples.Length == 0) return;
+        if (_sendEncoder == null || !UnifiedProtocolClient.Instance.IsConnected || samples.Length == 0)
+            return;
 
-        // Note: For simplicity and to match the unified receiver, we send raw PCM directly.
-        _ = UnifiedProtocolClient.Instance.SendAudioFrameAsync(samples, CancellationToken.None);
+        lock (_sendLock)
+        {
+            _sendAccumulator.AddRange(samples);
+
+            int needed = _sendFrameSize * _sendChannels;
+            while (_sendAccumulator.Count >= needed)
+            {
+                short[] frame = new short[needed];
+                _sendAccumulator.CopyTo(0, frame, 0, needed);
+                _sendAccumulator.RemoveRange(0, needed);
+
+                byte[] encoded = new byte[4000];
+                int encodedLength = _sendEncoder.Encode(frame, 0, _sendFrameSize, encoded, 0, encoded.Length);
+                if (encodedLength <= 0)
+                    continue;
+
+                byte[] opusFrame = new byte[encodedLength];
+                Array.Copy(encoded, opusFrame, encodedLength);
+                _ = UnifiedProtocolClient.Instance.SendMessageAsync(
+                    UnifiedMessageType.AudioFrame,
+                    opusFrame,
+                    CancellationToken.None);
+            }
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -449,20 +482,50 @@ public class AudioStreamingService
     }
 
     /// <summary>
-    /// Handle audio frame received via unified protocol.
-    /// Payload is raw PCM samples (16-bit).
+    /// Handle Opus audio frame received via unified protocol.
     /// </summary>
     private async Task HandleAudioFrameUnifiedAsync(byte[] payload, CancellationToken ct)
     {
         if (payload.Length == 0) return;
 
-        // Convert byte array to short array (PCM samples)
-        int sampleCount = payload.Length / 2;
-        var samples = new short[sampleCount];
-        Buffer.BlockCopy(payload, 0, samples, 0, payload.Length);
+        if (_receiveDecoder == null)
+        {
+            _receiveDecoder = OpusDecoder.Create(_receiveSampleRate, _receiveChannels);
+        }
+
+        short[] decoded = new short[_receiveFrameSize * _receiveChannels * 6];
+        int samplesPerChannel;
+        try
+        {
+            samplesPerChannel = _receiveDecoder.Decode(payload, 0, payload.Length, decoded, 0, decoded.Length / _receiveChannels, false);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[AudioStreaming] Opus decode failed: {ex.Message}");
+            return;
+        }
+
+        if (samplesPerChannel <= 0)
+            return;
+
+        int totalSamples = samplesPerChannel * _receiveChannels;
+        byte[] pcmBytes = new byte[totalSamples * sizeof(short)];
+        Buffer.BlockCopy(decoded, 0, pcmBytes, 0, pcmBytes.Length);
 
         if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
         {
+            if (!_runtimePlaybackStarted)
+            {
+                _runtimePlaybackStarted = RuntimeBridge?.StartPlayback(_receiveSampleRate, _receiveChannels) == true;
+                if (!_runtimePlaybackStarted)
+                {
+                    _log.Warning("[AudioStreaming] Runtime playback could not be started.");
+                    return;
+                }
+            }
+
+            var samples = new short[totalSamples];
+            Array.Copy(decoded, samples, totalSamples);
             RuntimeBridge?.PlayPcm(samples, _receiveSampleRate, _receiveChannels);
         }
         else
@@ -473,7 +536,11 @@ public class AudioStreamingService
             }
             if (_desktopPlaybackBuffer != null)
             {
-                _desktopPlaybackBuffer.AddSamples(payload, 0, payload.Length);
+                if (_desktopPlaybackBuffer.BufferedDuration > TimeSpan.FromMilliseconds(150))
+                {
+                    _desktopPlaybackBuffer.ClearBuffer();
+                }
+                _desktopPlaybackBuffer.AddSamples(pcmBytes, 0, pcmBytes.Length);
             }
         }
         

@@ -89,13 +89,12 @@ public partial class RemoteControlViewModel : ViewModelBase
         {
             await AudioStreamingService.Instance.StopAllAsync();
 
-            string pkeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
             bool sendOk;
 
             if (OperatingSystem.IsAndroid())
             {
-                // Send Android mic via low-latency SSH tunnel (bypasses Windows PC UDP limits)
-                sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget, pkeyPath);
+                // Send Android mic via low-latency unified protocol over mesh
+                sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget);
 
                 IsAudioStreaming = sendOk;
                 AudioStatus = sendOk
@@ -104,9 +103,8 @@ public partial class RemoteControlViewModel : ViewModelBase
             }
             else
             {
-                // Desktop: audio receive is handled by TCP server (already running).
-                // Just start sending system audio via SSH tunnel.
-                sendOk = await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget, pkeyPath);
+                // Desktop: audio receive is handled by unified protocol handler.
+                sendOk = await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget);
 
                 IsAudioStreaming = sendOk;
                 AudioStatus = sendOk
