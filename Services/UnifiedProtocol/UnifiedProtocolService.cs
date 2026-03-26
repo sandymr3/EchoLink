@@ -42,9 +42,9 @@ public class UnifiedProtocolService
         if (_serverCts != null) return;
         _serverCts = new CancellationTokenSource();
         
-        _listener = new TcpListener(IPAddress.Loopback, UnifiedPort);
+        _listener = new TcpListener(IPAddress.Any, UnifiedPort);
         _listener.Start();
-        _log.Info($"[Unified] Server listening on TCP port {UnifiedPort}");
+        _log.Info($"[Unified] Listening on 0.0.0.0:{UnifiedPort} for Tailscale mesh");
 
         _ = Task.Run(async () =>
         {

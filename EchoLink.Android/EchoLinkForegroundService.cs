@@ -32,7 +32,7 @@ public class EchoLinkForegroundService : Service
             StartForegroundService();
             
             // Launch the node in a background thread so we don't block the UI
-            Task.Run(() =>
+            Task.Run(async () =>
             {
                 try
                 {
@@ -109,6 +109,21 @@ public class EchoLinkForegroundService : Service
                     global::Android.Util.Log.Info("EchoLinkService", $"Calling StartEchoLinkNode with dir: {configDir}, Local IP: {localIp}, Ephemeral: {intentIsEphemeral}");
                     int result = NativeMethods.StartEchoLinkNode(configDir, intentAuthKey, global::Android.OS.Build.Model ?? "Android", localIp, isEphemeralInt);
                     global::Android.Util.Log.Info("EchoLinkService", $"StartEchoLinkNode returned: {result}");
+
+                    // Start headless clipboard service in foreground service context
+                    // Privileged by ForegroundServiceType.TypeDataSync | TypeSpecialUse declared in service attribute
+                    try
+                    {
+                        var androidClipboard = new EchoLink.Services.AndroidNativeClipboard();
+                        var clipboardService = EchoLink.Services.ClipboardSyncService.Instance;
+                        clipboardService.SetPlatformClipboard(androidClipboard);
+                        await clipboardService.StartAsync();
+                        global::Android.Util.Log.Info("EchoLinkService", "Clipboard sync service started in background");
+                    }
+                    catch (Exception clipboardEx)
+                    {
+                        global::Android.Util.Log.Error("EchoLinkService", $"Failed to start clipboard service: {clipboardEx.Message}");
+                    }
                 }
                 catch (Exception ex)
                 {

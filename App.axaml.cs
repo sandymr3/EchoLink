@@ -88,34 +88,42 @@ public partial class App : Application
 
     private async Task InitializeAppAsync(object lifetime)
     {
-        _log.Info("[Startup] Initializing application...");
-        
-        var settings = SettingsService.Instance.Load();
-        if (settings.IsLoggedIn)
+        try
         {
-            _log.Info("[Startup] User was logged in. Auto-starting Tailscale daemon...");
-            await TailscaleService.Instance.StartDaemonAsync(null!, false);
+            _log.Info("[Startup] Initializing application...");
+
+            var settings = SettingsService.Instance.Load();
+            if (settings.IsLoggedIn)
+            {
+                _log.Info("[Startup] User was logged in. Auto-starting Tailscale daemon...");
+                await TailscaleService.Instance.StartDaemonAsync(null!, false);
+            }
+
+            // Give the service/daemon time to initialize
+            await Task.Delay(2000);
+
+            _log.Info("[Startup] Checking connection status...");
+            bool running = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(10));
+            string state = await TailscaleService.Instance.GetBackendStateAsync();
+
+            // On Android, "TryBringUpAsync" just waits for the daemon state.
+            // If it returns true OR the state is already Running, we are good to go.
+            _log.Info($"[Startup] Running={running}, State={state}");
+
+            if (running || state == "Running")
+            {
+                _log.Info("[Startup] Authenticated. Opening Dashboard.");
+                NavigateToMain(lifetime);
+            }
+            else
+            {
+                _log.Info("[Startup] Not authenticated or transition needed. Opening Login.");
+                NavigateToLogin(lifetime);
+            }
         }
-
-        // Give the service/daemon time to initialize
-        await Task.Delay(2000);
-
-        _log.Info("[Startup] Checking connection status...");
-        bool running = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(10));
-        string state = await TailscaleService.Instance.GetBackendStateAsync();
-        
-        // On Android, "TryBringUpAsync" just waits for the daemon state. 
-        // If it returns true OR the state is already Running, we are good to go.
-        _log.Info($"[Startup] Running={running}, State={state}");
-
-        if (running || state == "Running")
+        catch (Exception ex)
         {
-            _log.Info("[Startup] Authenticated. Opening Dashboard.");
-            NavigateToMain(lifetime);
-        }
-        else
-        {
-            _log.Info("[Startup] Not authenticated or transition needed. Opening Login.");
+            _log.Error($"[Startup] Initialization failed: {ex.Message}");
             NavigateToLogin(lifetime);
         }
     }

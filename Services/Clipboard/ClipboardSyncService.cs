@@ -5,9 +5,6 @@ using System.Text;
 using System.Text.Json;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Threading;
 using EchoLink.Models;
 
 namespace EchoLink.Services;
@@ -21,8 +18,10 @@ public class ClipboardSyncService
     private readonly SettingsService _settings = SettingsService.Instance;
     private readonly ClipboardJournalService _journal = new();
 
+    // Platform clipboard abstraction (headless, no UIThread required)
+    private IPlatformClipboard? _nativeClipboard;
+
     private CancellationTokenSource? _cts;
-    private Task? _monitorTask;
     private Task? _reliabilityTask;
 
     private string _lastObservedHash = "";
@@ -38,6 +37,15 @@ public class ClipboardSyncService
     public event Action<ClipboardEntry>? ClipboardReceived;
 
     private ClipboardSyncService() { }
+
+    /// <summary>
+    /// Set the platform clipboard implementation. Can be called before StartAsync()
+    /// to inject a platform-specific clipboard handler (Android, Linux, Windows).
+    /// </summary>
+    public void SetPlatformClipboard(IPlatformClipboard clipboard)
+    {
+        _nativeClipboard = clipboard ?? throw new ArgumentNullException(nameof(clipboard));
+    }
 
     // === Unified Protocol Integration ===
 
@@ -82,16 +90,25 @@ public class ClipboardSyncService
         if (_cts is not null)
             return;
 
+        if (_nativeClipboard is null)
+        {
+            _log.Warning("[Clipboard] No platform clipboard set. Call SetPlatformClipboard() first.");
+            return;
+        }
+
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         _localAccountId = await TailscaleService.Instance.GetCurrentAccountIdAsync(_cts.Token)
             ?? "unknown-account";
         _log.Info($"MirrorClip: local account ID = {_localAccountId}");
 
-        _monitorTask = Task.Run(() => RunMonitorAsync(_cts.Token), _cts.Token);
+        // Subscribe to platform clipboard change events (event-driven, no polling)
+        _nativeClipboard.OnClipboardChanged += HandleLocalClipboardChanged;
+        _nativeClipboard.StartMonitoring();
+
         _reliabilityTask = Task.Run(() => RunReliabilityLoopAsync(_cts.Token), _cts.Token);
 
-        _log.Info("MirrorClip sync engine started (monitor + reliability loops).");
+        _log.Info("MirrorClip sync engine started (event-driven monitor + reliability loop).");
     }
 
     public async Task StopAsync()
@@ -99,11 +116,16 @@ public class ClipboardSyncService
         if (_cts is null)
             return;
 
+        // Unsubscribe from clipboard change events
+        if (_nativeClipboard is not null)
+        {
+            _nativeClipboard.OnClipboardChanged -= HandleLocalClipboardChanged;
+            _nativeClipboard.StopMonitoring();
+        }
+
         _cts.Cancel();
         try
         {
-            if (_monitorTask is not null)
-                await _monitorTask;
             if (_reliabilityTask is not null)
                 await _reliabilityTask;
         }
@@ -112,7 +134,6 @@ public class ClipboardSyncService
         {
             _cts.Dispose();
             _cts = null;
-            _monitorTask = null;
             _reliabilityTask = null;
         }
 
@@ -121,7 +142,13 @@ public class ClipboardSyncService
 
     public async Task PushCurrentClipboardAsync(CancellationToken ct = default)
     {
-        var text = await GetClipboardTextAsync();
+        if (_nativeClipboard is null)
+        {
+            _log.Warning("[Clipboard] No platform clipboard set.");
+            return;
+        }
+
+        var text = await _nativeClipboard.GetTextAsync();
         if (string.IsNullOrWhiteSpace(text))
         {
             _log.Warning("MirrorClip PushCurrentClipboard: clipboard was empty or unreadable.");
@@ -158,55 +185,40 @@ public class ClipboardSyncService
         return Task.CompletedTask;
     }
 
-    private async Task RunMonitorAsync(CancellationToken ct)
+    /// <summary>
+    /// Invoked instantly when the platform clipboard content changes.
+    /// Replaces the old 900ms polling loop with event-driven monitoring.
+    /// </summary>
+    private void HandleLocalClipboardChanged(object? sender, string newText)
     {
-        _log.Info("MirrorClip monitor loop started.");
-        while (!ct.IsCancellationRequested)
+        if (string.IsNullOrWhiteSpace(newText))
+            return;
+
+        var hash = ComputeHash(newText);
+        if (DateTime.UtcNow < _suppressLocalUntilUtc)
+        {
+            _lastObservedHash = hash;
+            return;
+        }
+
+        if (hash == _lastObservedHash)
+            return;
+
+        _lastObservedHash = hash;
+        _log.Info($"MirrorClip: clipboard changed (event-driven) ({newText.Length} chars), broadcasting...");
+        
+        // Fire and forget - don't block the event handler
+        _ = Task.Run(async () =>
         {
             try
             {
-                var settings = _settings.Load();
-                if (!settings.MirrorClipEnabled)
-                {
-                    await Task.Delay(1200, ct);
-                    continue;
-                }
-
-                var text = await GetClipboardTextAsync();
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    await Task.Delay(900, ct);
-                    continue;
-                }
-
-                var hash = ComputeHash(text);
-                if (DateTime.UtcNow < _suppressLocalUntilUtc)
-                {
-                    _lastObservedHash = hash;
-                    await Task.Delay(900, ct);
-                    continue;
-                }
-
-                if (hash == _lastObservedHash)
-                {
-                    await Task.Delay(900, ct);
-                    continue;
-                }
-
-                _lastObservedHash = hash;
-                _log.Info($"MirrorClip monitor: new clipboard content detected ({text.Length} chars), broadcasting...");
-                await BroadcastClipboardAsync(text, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                await BroadcastClipboardAsync(newText, _cts?.Token ?? CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _log.Warning($"MirrorClip monitor loop error: {ex.Message}");
-                await Task.Delay(1000, ct);
+                _log.Warning($"MirrorClip: failed to broadcast clipboard: {ex.Message}");
             }
-        }
+        });
     }
 
     private async Task BroadcastClipboardAsync(string text, CancellationToken ct)
@@ -321,7 +333,23 @@ public class ClipboardSyncService
         }
 
         await _journal.AppendAsync(message, ct);
-        await ApplyRemoteClipboardAsync(message.ContentText);
+        
+        // Apply remote clipboard using platform clipboard (no UIThread required)
+        if (_nativeClipboard is not null)
+        {
+            _suppressLocalUntilUtc = DateTime.UtcNow.AddSeconds(2);
+            _lastObservedHash = ComputeHash(message.ContentText);
+            
+            try
+            {
+                await _nativeClipboard.SetTextAsync(message.ContentText);
+                _log.Info($"MirrorClip: applied remote clipboard ({message.ContentText.Length} chars) to local device.");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning($"MirrorClip: failed to apply remote clipboard: {ex.Message}");
+            }
+        }
 
         ClipboardReceived?.Invoke(new ClipboardEntry(
             message.ContentText,
@@ -331,47 +359,14 @@ public class ClipboardSyncService
         _log.Info($"MirrorClip received clip from {message.SenderDeviceId}.");
     }
 
-    private Avalonia.Input.Platform.IClipboard? GetAvaloniaClipboard()
+    private static string ComputeHash(string text)
     {
-        var app = Avalonia.Application.Current;
-        if (app?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime dt && dt.MainWindow != null)
-        {
-            return Avalonia.Controls.TopLevel.GetTopLevel(dt.MainWindow)?.Clipboard;
-        }
-        else if (app?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime single && single.MainView != null)
-        {
-            return Avalonia.Controls.TopLevel.GetTopLevel(single.MainView)?.Clipboard;
-        }
-        return null;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToBase64String(hash);
     }
 
-    private async Task ApplyRemoteClipboardAsync(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        _suppressLocalUntilUtc = DateTime.UtcNow.AddSeconds(2);
-        _lastObservedHash = ComputeHash(text);
-
-        await Dispatcher.UIThread.InvokeAsync(async () =>
-        {
-            try
-            {
-                var clipboard = GetAvaloniaClipboard();
-                if (clipboard is null)
-                    return;
-
-                await clipboard.SetTextAsync(text);
-                _log.Info($"MirrorClip: applied remote clipboard ({text.Length} chars) to local device.");
-            }
-            catch (Exception ex)
-            {
-                _log.Warning($"MirrorClip: failed to apply remote clipboard: {ex.Message}");
-            }
-        });
-    }
-
-    private async Task<bool> IsSameAccountAsync(string? senderAccountId, CancellationToken ct)
+    private async Task<bool> IsSameAccountAsync(string senderAccountId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(senderAccountId))
             return false;
@@ -392,80 +387,56 @@ public class ClipboardSyncService
         return string.Equals(senderAccountId, _localAccountId, StringComparison.Ordinal);
     }
 
-    private static string ComputeHash(string text)
+    private async Task<bool> SendClipToPeerAsync(
+        string targetIp,
+        ClipboardSyncMessage message,
+        CancellationToken ct)
     {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToBase64String(hash);
-    }
+        // Peer must be paired, though this direct TCP path does not use the username value itself.
+        var settings = _settings.Load();
+        if (!settings.PeerUsernames.TryGetValue(targetIp, out _))
+        {
+            _log.Debug($"MirrorClip Cannot sync to {targetIp} because it is not paired.");
+            return false;
+        }
 
-    private async Task<string?> GetClipboardTextAsync()
-    {
         try
         {
-            return await Dispatcher.UIThread.InvokeAsync(async () =>
-            {
-                var clipboard = GetAvaloniaClipboard();
-                if (clipboard is null)
-                    return null;
+            // Connect directly to the Unified Protocol Port (55555) via SOCKS5.
+            using var client = await NetworkService.Instance.ConnectViaSocks5Async(
+                targetIp,
+                UnifiedProtocol.UnifiedProtocolService.UnifiedPort,
+                ct);
 
-                return await clipboard.GetTextAsync();
-            });
+            if (client == null || !client.Connected)
+                return false;
+
+            using var stream = client.GetStream();
+
+            var json = JsonSerializer.Serialize(message);
+            var payload = Encoding.UTF8.GetBytes(json);
+
+            // Build header: [Type:1][Length:4 big-endian]
+            var header = new byte[5];
+            header[0] = (byte)UnifiedProtocol.UnifiedMessageType.ClipboardSync;
+            var lengthBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload.Length));
+            Array.Copy(lengthBytes, 0, header, 1, 4);
+
+            await stream.WriteAsync(header, ct);
+            if (payload.Length > 0)
+            {
+                await stream.WriteAsync(payload, ct);
+            }
+
+            await stream.FlushAsync(ct);
+            return true;
         }
         catch (Exception ex)
         {
-            _log.Warning($"MirrorClip: clipboard read failed: {ex.Message}");
-            return null;
+            _log.Debug($"MirrorClip: Failed to send to {targetIp} via Unified Protocol: {ex.Message}");
+            return false;
         }
     }
-
-        private async Task<bool> SendClipToPeerAsync(string targetIp, ClipboardSyncMessage message, CancellationToken ct)
-        {
-            // 1. Peer must be paired (we should have a username, though we won't use it for this direct TCP connection)
-            var settings = _settings.Load();
-            if (!settings.PeerUsernames.TryGetValue(targetIp, out string? _) )
-            {
-                _log.Debug($"MirrorClip Cannot sync to {targetIp} because it is not paired.");
-                return false;
-            }
-
-            try
-            {
-                // 2. Connect directly to the Unified Protocol Port (55555) via SOCKS5
-                using var client = await NetworkService.Instance.ConnectViaSocks5Async(
-                    targetIp,
-                    UnifiedProtocol.UnifiedProtocolService.UnifiedPort,
-                    ct);
-
-                if (client == null || !client.Connected)
-                    return false;
-
-                using var stream = client.GetStream();
-
-                var json = JsonSerializer.Serialize(message);
-                var payload = Encoding.UTF8.GetBytes(json);
-
-                // Build header: [Type:1][Length:4 big-endian]
-                var header = new byte[5];
-                header[0] = (byte)UnifiedProtocol.UnifiedMessageType.ClipboardSync;
-                var lengthBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload.Length));
-                Array.Copy(lengthBytes, 0, header, 1, 4);
-
-                await stream.WriteAsync(header, ct);
-                if (payload.Length > 0)
-                {
-                    await stream.WriteAsync(payload, ct);
-                }
-                await stream.FlushAsync(ct);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _log.Debug($"MirrorClip: Failed to send to {targetIp} via Unified Protocol: {ex.Message}");
-                return false;
-            }
-        }
 
     private void QueuePending(string peerIp, ClipboardSyncMessage message)
     {

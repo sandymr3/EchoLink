@@ -57,8 +57,16 @@ public partial class LoginViewModel : ViewModelBase
 
             // Start Tailscale as Ephemeral node
             await TailscaleService.Instance.StartDaemonAsync(preAuthKey, true, ct);
-            
-            await Task.Delay(1500, ct);
+
+            var ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
+                TimeSpan.FromSeconds(20),
+                ct);
+            if (!ready)
+            {
+                StatusText = "Connected account, but mesh is still starting. Please try again.";
+                _log.Warning("[Login] Guest daemon did not reach Running state within timeout.");
+                return;
+            }
 
             _log.Info("[Login] Ephemeral node started.");
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoginSucceeded?.Invoke());
@@ -119,6 +127,19 @@ public partial class LoginViewModel : ViewModelBase
             // 2. Start Tailscale using the obtained Pre-Auth Key.
             // Ecosystem node (not ephemeral) for standard login
             await TailscaleService.Instance.StartDaemonAsync(authKey, false, ct);
+
+            // Do not transition to main UI until backend is actually Running.
+            // This avoids a false-success path where login moves forward while
+            // tailscaled is still in NoState/Starting.
+            var ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
+                TimeSpan.FromSeconds(20),
+                ct);
+            if (!ready)
+            {
+                StatusText = "Connected account, but mesh is still starting. Please try again.";
+                _log.Warning("[Login] Daemon did not reach Running state within timeout.");
+                return;
+            }
 
             // Persist the login state
             var settings = SettingsService.Instance.Load();

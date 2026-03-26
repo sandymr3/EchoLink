@@ -13,6 +13,20 @@ sealed class Program
     {
         EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new LinuxAudioRuntimeBridge();
         
+        // Start headless clipboard daemon BEFORE UI loads (event-driven, no polling)
+        try
+        {
+            var linuxClipboard = new EchoLink.Services.LinuxNativeClipboard();
+            var clipboardService = EchoLink.Services.ClipboardSyncService.Instance;
+            clipboardService.SetPlatformClipboard(linuxClipboard);
+            _ = clipboardService.StartAsync(); // Fire and forget - runs in parallel
+            Console.WriteLine("[Linux Startup] Clipboard sync daemon started");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Linux Startup] Warning: Failed to start clipboard service: {ex.Message}");
+        }
+
         // Ensure virtual mic is setup on Linux at startup
         EnsureVirtualMic();
 

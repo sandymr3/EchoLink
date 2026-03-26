@@ -80,7 +80,9 @@ public partial class MainWindowViewModel : ViewModelBase
             return await PromptUserForPairingAsync(hostname);
         });
 
+        // Start clipboard sync (StartAsync is idempotent and returns if already running)
         await _clipboardSync.StartAsync();
+        
         // Initialize unified protocol handlers
         RemoteControlService.Instance.InitializeUnifiedProtocol();
         AudioStreamingService.Instance.InitializeUnifiedProtocol();

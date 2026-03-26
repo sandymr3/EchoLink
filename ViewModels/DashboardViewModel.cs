@@ -191,10 +191,17 @@ public partial class DashboardViewModel : ViewModelBase
         try
         {
             var state = await TailscaleService.Instance.GetBackendStateAsync();
-            if (state == "Starting" || state == "NeedsLogin")
+            if (state == "Starting" || state == "NeedsLogin" || state == "NoState" || state == "Unknown")
             {
-               await Task.Delay(2000); 
-               state = await TailscaleService.Instance.GetBackendStateAsync();
+                // Startup can briefly report NoState/Starting right after login.
+                // Wait a bit longer before showing a hard disconnected state.
+                for (int i = 0; i < 8; i++)
+                {
+                    await Task.Delay(1500);
+                    state = await TailscaleService.Instance.GetBackendStateAsync();
+                    if (state == "Running")
+                        break;
+                }
             }
 
             if (state != "Running")
