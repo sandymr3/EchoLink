@@ -127,6 +127,7 @@ public partial class RemoteControlViewModel : ViewModelBase
         TrackpadStatus = success
             ? "Connected"
             : "Failed to connect via Unified Protocol";
+
     }
 
     // ── Keyboard Diffing Engine ───────────────────────────────────────────────
@@ -204,6 +205,8 @@ public partial class RemoteControlViewModel : ViewModelBase
         _previousText = " ";
         RequestKeyboardReset?.Invoke();
         _isResetting = false;
+
+
     }
 
     [RelayCommand]
