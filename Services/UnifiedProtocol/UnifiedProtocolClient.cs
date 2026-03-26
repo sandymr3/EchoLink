@@ -36,22 +36,34 @@ public class UnifiedProtocolClient
     /// <returns>True if connection successful</returns>
     public async Task<bool> ConnectAsync(string targetIp, string pkeyPath, CancellationToken ct)
     {
-        Disconnect();
+        // Legacy signature kept for compatibility with callers that still pass a key path.
+        return await ConnectAsync(
+            targetIp,
+            UnifiedProtocolService.UnifiedPort,
+            NetworkService.TailscaleSocks5Port,
+            ct);
+    }
 
-        var settings = SettingsService.Instance.Load();
-        if (!settings.PeerUsernames.TryGetValue(targetIp, out _))
-        {
-            _log.Error($"[Unified] Cannot connect - not paired: {targetIp}");
-            return false;
-        }
+    /// <summary>
+    /// Connect to a remote device via SOCKS5 to a specific target port.
+    /// This path is used by remote control to avoid any SSH dependency.
+    /// </summary>
+    public async Task<bool> ConnectAsync(
+        string targetIp,
+        int targetPort,
+        int socks5Port,
+        CancellationToken ct)
+    {
+        Disconnect();
 
         try
         {
-            _log.Debug($"[Unified] Dialing {targetIp}:{UnifiedProtocolService.UnifiedPort} via SOCKS5...");
+            _log.Debug($"[Unified] Dialing {targetIp}:{targetPort} via SOCKS5 127.0.0.1:{socks5Port}...");
             
             _tcpClient = await NetworkService.Instance.ConnectViaSocks5Async(
-                targetIp, 
-                UnifiedProtocolService.UnifiedPort, 
+                targetIp,
+                targetPort,
+                socks5Port,
                 ct);
 
             if (_tcpClient == null || !_tcpClient.Connected)

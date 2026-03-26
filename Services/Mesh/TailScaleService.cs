@@ -589,7 +589,7 @@ public class TailscaleService
         var groupedPeers = devices.Where(d => !d.IsSelf && !string.IsNullOrEmpty(d.Name)).GroupBy(d => d.Name);
         foreach (var group in groupedPeers)
         {
-            var mostRecent = group.OrderByDescending(d => d.LastSeen ?? DateTime.MinValue).First();
+            var mostRecent = group.OrderByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value : DateTime.MinValue).First();
             cleanDevices.Add(mostRecent);
         }
         
@@ -651,12 +651,11 @@ public class TailscaleService
         return new Models.Device
         {
             Name = hostName,
-            NodeId = nodeId,
             IpAddress = ip,
             IsOnline = online,
             DeviceType = deviceType,
             Os = os,
-            LastSeen = lastSeen,
+            LastSeen = lastSeen ?? DateTime.UtcNow,
             IsSelf = isSelf,
             IsPaired = isPaired,
             UserId = userId,
@@ -693,7 +692,7 @@ public class TailscaleService
             foreach (var group in groupedDevices)
             {
                 // Find the most recently seen device
-                var mostRecent = group.OrderByDescending(d => d.LastSeen ?? DateTime.MinValue).First();
+                var mostRecent = group.OrderByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value : DateTime.MinValue).First();
                 
                 _log.Info($"[Tailscale] Found {group.Count()} devices named '{group.Key}'. Keeping IP: {mostRecent.IpAddress} (LastSeen: {mostRecent.LastSeen})");
 

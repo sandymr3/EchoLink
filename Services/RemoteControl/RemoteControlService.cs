@@ -24,7 +24,7 @@ public class RemoteControlService
     }
 
     // Client side
-    public async Task<bool> ConnectToTargetAsync(Device targetDevice, string pkeyPath, CancellationToken ct)
+    public async Task<bool> ConnectToTargetAsync(Device targetDevice, CancellationToken ct)
     {
         if (UnifiedProtocolClient.Instance.IsConnected)
         {
@@ -32,7 +32,11 @@ public class RemoteControlService
             return true;
         }
 
-        return await UnifiedProtocolClient.Instance.ConnectAsync(targetDevice.IpAddress, pkeyPath, ct);
+        return await UnifiedProtocolClient.Instance.ConnectAsync(
+            targetDevice.IpAddress,
+            UnifiedProtocolService.UnifiedPort,
+            NetworkService.TailscaleSocks5Port,
+            ct);
     }
 
     public void Disconnect()

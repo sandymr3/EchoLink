@@ -69,10 +69,11 @@ public partial class RemoteControlViewModel : ViewModelBase
         }
 
         TrackpadStatus = "Connecting...";
-        string pkeyPath = new SshPairingService(TailscaleService.Instance).PrivateKeyPath;
-        bool success = await RemoteControlService.Instance.ConnectToTargetAsync(target, pkeyPath, CancellationToken.None);
+        bool success = await RemoteControlService.Instance.ConnectToTargetAsync(target, CancellationToken.None);
         
-        TrackpadStatus = success ? "Connected" : "Failed to connect";
+        TrackpadStatus = success
+            ? "Connected"
+            : "Failed to connect via Unified Protocol";
     }
 
     [RelayCommand]

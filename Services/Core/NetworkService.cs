@@ -25,11 +25,24 @@ public class NetworkService
     /// </summary>
     public async Task<TcpClient?> ConnectViaSocks5Async(string targetIp, int port, CancellationToken ct = default)
     {
+        return await ConnectViaSocks5Async(targetIp, port, TailscaleSocks5Port, ct);
+    }
+
+    /// <summary>
+    /// Connects to a remote Tailscale IP and port using a specific local SOCKS5 port.
+    /// Supports both IPv4 (100.x.y.z) and IPv6 (fd7a:x:y::z).
+    /// </summary>
+    public async Task<TcpClient?> ConnectViaSocks5Async(
+        string targetIp,
+        int port,
+        int socks5Port,
+        CancellationToken ct = default)
+    {
         var client = new TcpClient();
         try
         {
             // Connect to the local SOCKS5 proxy provided by Tailscale
-            await client.ConnectAsync("127.0.0.1", TailscaleSocks5Port, ct);
+            await client.ConnectAsync("127.0.0.1", socks5Port, ct);
             var stream = client.GetStream();
 
             // 1. SOCKS5 Greeting (No authentication required)
