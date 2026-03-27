@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Services;
 using EchoLink.Services.UnifiedProtocol;
+using EchoLink.Services.SystemMonitor;
 
 namespace EchoLink.ViewModels;
 

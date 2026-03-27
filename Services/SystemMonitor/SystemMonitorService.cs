@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using EchoLink.Models;
 using EchoLink.Services.UnifiedProtocol;
 
-namespace EchoLink.Services;
+namespace EchoLink.Services.SystemMonitor;
 
 public class SystemMonitorService
 {
@@ -24,15 +24,17 @@ public class SystemMonitorService
             UnifiedMessageType.MonitorRequest,
             async (payload, reply, ct) => await HandleMonitorRequestAsync(payload, reply, ct));
         
-        // Response handler for when we send a request to another device
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.MonitorResponse,
             async (payload, reply, ct) => await HandleMonitorResponseAsync(payload, ct));
 
         _log.Info("[SystemMonitor] Unified protocol handlers registered");
+        
+        // Start Http Bridge for Prometheus metrics
+        PrometheusHttpBridge.Instance.Start(9000);
     }
 
-    public event Action<TelemetrySnapshot>? SnapshotReceived;
+    public event Action<SystemMetricsSnapshot>? SnapshotReceived;
 
     // --- Server Side (Handling requests from other devices) ---
 
@@ -40,10 +42,11 @@ public class SystemMonitorService
     {
         try
         {
-            ITelemetryStrategy strategy = GetStrategyForCurrentOs();
-            var snapshot = await strategy.GetLocalSnapshotAsync();
+            ISystemMetricsCollector collector = GetStrategyForCurrentOs();
+            var snapshot = await Task.Run(() => collector.Collect(), ct);
 
             var json = JsonSerializer.Serialize(snapshot);
+            _log.Info($"[SystemMonitor] Sending MonitorResponse: {json}");
             var responsePayload = Encoding.UTF8.GetBytes(json);
 
             await reply(UnifiedMessageType.MonitorResponse, responsePayload);
@@ -54,13 +57,20 @@ public class SystemMonitorService
         }
     }
 
-    private ITelemetryStrategy GetStrategyForCurrentOs()
+    private ISystemMetricsCollector? _collector;
+    
+    private ISystemMetricsCollector GetStrategyForCurrentOs()
     {
+        if (_collector != null) return _collector;
+
         if (OperatingSystem.IsWindows())
-            return new WindowsTelemetryStrategy();
-        if (OperatingSystem.IsAndroid())
-            return new AndroidTelemetryStrategy();
-        return new LinuxTelemetryStrategy(); // Default for Linux
+            _collector = new WindowsMetricsCollector();
+        else if (OperatingSystem.IsAndroid())
+            _collector = new AndroidMetricsCollector();
+        else
+            _collector = new LinuxMetricsCollector(); // Default for Linux
+            
+        return _collector;
     }
 
     // --- Client Side (Requesting stats from other devices) ---
@@ -81,12 +91,17 @@ public class SystemMonitorService
         {
             try
             {
+                _log.Debug($"[SystemMonitor] Sending MonitorRequest...");
                 await UnifiedProtocolClient.Instance.SendMessageAsync(UnifiedMessageType.MonitorRequest, Array.Empty<byte>(), CancellationToken.None);
             }
             catch (Exception ex)
             {
                 _log.Warning($"[SystemMonitor] Request failed: {ex.Message}");
             }
+        }
+        else
+        {
+             _log.Warning($"[SystemMonitor] Request failed: Not Connected to UnifiedProtocol Client.");
         }
     }
 
@@ -95,10 +110,15 @@ public class SystemMonitorService
         try
         {
             var json = Encoding.UTF8.GetString(payload);
-            var snapshot = JsonSerializer.Deserialize<TelemetrySnapshot>(json);
+            _log.Info($"[SystemMonitor] Received MonitorResponse: {json}");
+            var snapshot = JsonSerializer.Deserialize<SystemMetricsSnapshot>(json);
             if (snapshot != null)
             {
                 SnapshotReceived?.Invoke(snapshot);
+            }
+            else
+            {
+                _log.Warning($"[SystemMonitor] Deserialized snapshot is null");
             }
         }
         catch (Exception ex)
@@ -107,5 +127,33 @@ public class SystemMonitorService
         }
 
         return Task.CompletedTask;
+    }
+
+    public async Task<SystemMetricsSnapshot> FetchSnapshotForBridgeAsync()
+    {
+        if (UnifiedProtocolClient.Instance.IsConnected)
+        {
+            var tcs = new TaskCompletionSource<SystemMetricsSnapshot>();
+            Action<SystemMetricsSnapshot>? handler = null;
+            handler = s => 
+            {
+                tcs.TrySetResult(s);
+                SnapshotReceived -= handler;
+            };
+            SnapshotReceived += handler;
+            
+            await RequestSnapshotAsync();
+
+            var timeoutTask = Task.Delay(2000);
+            if (await Task.WhenAny(tcs.Task, timeoutTask) == tcs.Task)
+            {
+                return tcs.Task.Result;
+            }
+            SnapshotReceived -= handler;
+        }
+        
+        // Fallback to local
+        var collector = GetStrategyForCurrentOs();
+        return await Task.Run(() => collector.Collect());
     }
 }

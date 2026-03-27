@@ -20,6 +20,7 @@ public class UnifiedProtocolClient
     private readonly LoggingService _log = LoggingService.Instance;
     private Stream? _stream;
     private TcpClient? _tcpClient;
+    private CancellationTokenSource? _readCts;
 
     /// <summary>
     /// Returns true if connected to a remote device.
@@ -60,6 +61,10 @@ public class UnifiedProtocolClient
 
             _stream = _tcpClient.GetStream();
             _log.Info($"[Unified] Connected to {targetIp}:{UnifiedProtocolService.UnifiedPort}");
+            
+            _readCts = new CancellationTokenSource();
+            _ = Task.Run(() => ReadLoopAsync(_stream, _readCts.Token));
+
             return true;
         }
         catch (Exception ex)
@@ -74,6 +79,10 @@ public class UnifiedProtocolClient
     /// </summary>
     public void Disconnect()
     {
+        _readCts?.Cancel();
+        _readCts?.Dispose();
+        _readCts = null;
+
         _stream?.Dispose();
         _stream = null;
         _tcpClient?.Close();
@@ -112,6 +121,46 @@ public class UnifiedProtocolClient
         catch (Exception ex)
         {
             _log.Error($"[Unified] Send failed: {ex.Message}");
+            Disconnect();
+        }
+    }
+
+    private async Task ReadLoopAsync(Stream stream, CancellationToken ct)
+    {
+        var headerBuffer = new byte[5];
+        
+        while (!ct.IsCancellationRequested && _tcpClient?.Connected == true)
+        {
+            try
+            {
+                // Read 5-byte header: [Type:1][Length:4]
+                int headerBytes = await UnifiedProtocolService.Instance.ReadExactAsync(stream, headerBuffer, 5, ct);
+                if (headerBytes < 5) break;
+
+                byte messageType = headerBuffer[0];
+                int payloadLen = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(headerBuffer, 1));
+
+                // Read payload
+                byte[] payload = Array.Empty<byte>();
+                if (payloadLen > 0)
+                {
+                    payload = new byte[payloadLen];
+                    await UnifiedProtocolService.Instance.ReadExactAsync(stream, payload, payloadLen, ct);
+                }
+
+                // Dispatch to registered handler
+                await UnifiedProtocolService.Instance.DispatchMessageAsync((UnifiedMessageType)messageType, payload, stream, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _log.Debug($"[Unified] Client read loop error: {ex.Message}");
+                break;
+            }
+        }
+        
+        if (!ct.IsCancellationRequested)
+        {
             Disconnect();
         }
     }
