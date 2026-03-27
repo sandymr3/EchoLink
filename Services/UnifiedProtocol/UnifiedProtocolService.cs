@@ -116,7 +116,7 @@ public class UnifiedProtocolService
         }
     }
 
-    private async Task DispatchMessageAsync(UnifiedMessageType messageType, byte[] payload, NetworkStream stream, CancellationToken ct)
+    public async Task DispatchMessageAsync(UnifiedMessageType messageType, byte[] payload, Stream stream, CancellationToken ct)
     {
         if (_handlers.TryGetValue(messageType, out var handler))
         {
@@ -157,7 +157,7 @@ public class UnifiedProtocolService
     /// Read exactly 'count' bytes from stream.
     /// Returns total bytes read (may be less than count if connection closes).
     /// </summary>
-    private async Task<int> ReadExactAsync(NetworkStream stream, byte[] buffer, int count, CancellationToken ct)
+    public async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int count, CancellationToken ct)
     {
         int totalRead = 0;
         while (totalRead < count)
