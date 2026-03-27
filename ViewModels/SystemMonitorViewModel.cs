@@ -6,6 +6,7 @@ using EchoLink.Models;
 using EchoLink.Services;
 using System.Threading.Tasks;
 using System;
+using EchoLink.Services.SystemMonitor;
 
 namespace EchoLink.ViewModels;
 
@@ -43,29 +44,26 @@ public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
         SystemMonitorService.Instance.SnapshotReceived += OnSnapshotReceived;
     }
 
-    private void OnSnapshotReceived(TelemetrySnapshot snapshot)
+    private void OnSnapshotReceived(SystemMetricsSnapshot snapshot)
     {
         if (!IsConnected) return;
 
         Dispatcher.UIThread.Post(() =>
         {
-            CpuUsage = Math.Round(snapshot.CpuLoadPercentage, 1);
-            RamUsage = Math.Round(snapshot.RamLoadPercentage, 1);
-            DiskUsage = Math.Round(snapshot.DiskLoadPercentage, 1);
+            CpuUsage = Math.Round(snapshot.CpuUsagePercent, 1);
             
-            RamDetailText = $"{snapshot.UsedRamDisplay} / {snapshot.TotalRamDisplay}";
-            DiskDetailText = $"{snapshot.UsedDiskDisplay} / {snapshot.TotalDiskDisplay}";
+            double ramPct = snapshot.TotalMemoryBytes > 0 ? (double)snapshot.UsedMemoryBytes / snapshot.TotalMemoryBytes * 100 : 0;
+            RamUsage = Math.Round(ramPct, 1);
             
-            UptimeText = snapshot.UptimeDisplay;
+            long usedDisk = snapshot.DiskTotalBytes - snapshot.DiskFreeBytes;
+            double diskPct = snapshot.DiskTotalBytes > 0 ? (double)usedDisk / snapshot.DiskTotalBytes * 100 : 0;
+            DiskUsage = Math.Round(diskPct, 1);
             
-            if (snapshot.BatteryPercentage >= 0)
-            {
-                BatteryText = $"{snapshot.BatteryPercentage:F0}% {(snapshot.IsCharging ? "⚡" : "🔋")}";
-            }
-            else
-            {
-                BatteryText = "N/A";
-            }
+            RamDetailText = $"{snapshot.UsedMemoryBytes / 1073741824.0:F1} GB / {snapshot.TotalMemoryBytes / 1073741824.0:F1} GB";
+            DiskDetailText = $"{usedDisk / 1073741824.0:F1} GB / {snapshot.DiskTotalBytes / 1073741824.0:F1} GB";
+            
+            UptimeText = $"Procs: {snapshot.ProcessCount}";
+            BatteryText = snapshot.LoadAverage1m > 0 ? $"Load: {snapshot.LoadAverage1m:F2}" : "N/A";
 
             LastUpdated = $"Updated {DateTime.Now:HH:mm:ss}";
             _isPolling = false; // Reset lock since we got a response
