@@ -1,8 +1,12 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
 using EchoLink.Services;
+using EchoLink.Services.UnifiedProtocol;
 
 namespace EchoLink.ViewModels;
 
@@ -23,6 +27,11 @@ public partial class RemoteControlViewModel : ViewModelBase
     private double _lastX;
     private double _lastY;
     private bool   _isDragging;
+
+    // Keyboard state
+    private bool _isResetting = false;
+    private string _previousText = " ";
+    public Action? RequestKeyboardReset { get; set; }
 
     public RemoteControlViewModel()
     {
@@ -66,6 +75,7 @@ public partial class RemoteControlViewModel : ViewModelBase
         await AudioStreamingService.Instance.StopAllAsync();
         IsAudioStreaming = false;
         AudioStatus = "Audio idle";
+        ResetKeyboardTrap();
 
         if (target == null)
         {
@@ -80,6 +90,83 @@ public partial class RemoteControlViewModel : ViewModelBase
         TrackpadStatus = success
             ? "Connected"
             : "Failed to connect via Unified Protocol";
+    }
+
+    // ── Keyboard Diffing Engine ───────────────────────────────────────────────
+
+    public void ProcessKeyboardTextChange(string newText)
+    {
+        if (_isResetting || !UnifiedProtocolClient.Instance.IsConnected) return;
+
+        newText ??= "";
+
+        // 1. Safety net: If user deletes everything
+        if (string.IsNullOrEmpty(newText))
+        {
+            _ = UnifiedProtocolClient.Instance.SendKeyboardControlKeyAsync(8, CancellationToken.None); // Backspace
+            ResetKeyboardTrap();
+            return;
+        }
+
+        // 2. Find the Common Prefix
+        int commonLength = 0;
+        int minLength = Math.Min(_previousText.Length, newText.Length);
+        while (commonLength < minLength && _previousText[commonLength] == newText[commonLength])
+        {
+            commonLength++;
+        }
+
+        // 3. Calculate Deletions (Backspaces)
+        int backspacesNeeded = _previousText.Length - commonLength;
+        for (int i = 0; i < backspacesNeeded; i++)
+        {
+            _ = UnifiedProtocolClient.Instance.SendKeyboardControlKeyAsync(8, CancellationToken.None); 
+        }
+
+        // 4. Calculate Additions
+        string charsToAdd = newText.Substring(commonLength);
+        if (!string.IsNullOrEmpty(charsToAdd))
+        {
+            // INTERCEPT THE ENTER KEY
+            // Because AcceptsReturn="True", Enter shows up as a newline
+            if (charsToAdd == "\n" || charsToAdd == "\r\n")
+            {
+                _ = UnifiedProtocolClient.Instance.SendKeyboardControlKeyAsync(13, CancellationToken.None); // VK Code for Enter
+            }
+            else if (charsToAdd.Contains("\n"))
+            {
+                 // Edge case: Sometimes Gboard sends text AND a newline together
+                 string cleanedText = charsToAdd.Replace("\n", "").Replace("\r", "");
+                 if (!string.IsNullOrEmpty(cleanedText)) 
+                     _ = UnifiedProtocolClient.Instance.SendKeyboardTextAsync(cleanedText, CancellationToken.None);
+                 _ = UnifiedProtocolClient.Instance.SendKeyboardControlKeyAsync(13, CancellationToken.None); // Send the Enter key after the text
+            }
+            else
+            {
+                _ = UnifiedProtocolClient.Instance.SendKeyboardTextAsync(charsToAdd, CancellationToken.None);
+            }
+        }
+
+        // Update state
+        _previousText = newText;
+
+        // 5. Safe Memory Flush
+        // We NO LONGER reset on every spacebar! 
+        // We let the string grow so Gboard can reach back and edit past words.
+        // We only reset if the string gets absurdly long (> 200 chars) to prevent lag,
+        // and only when we are safely at the end of a word (space).
+        if (_previousText.Length > 200 && newText.EndsWith(" "))
+        {
+            ResetKeyboardTrap();
+        }
+    }
+
+    public void ResetKeyboardTrap()
+    {
+        _isResetting = true;
+        _previousText = " ";
+        RequestKeyboardReset?.Invoke();
+        _isResetting = false;
     }
 
     [RelayCommand]

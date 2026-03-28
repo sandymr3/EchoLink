@@ -105,6 +105,14 @@ public class RemoteControlService
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.SystemAction,
             async (payload, reply, ct) => await SystemControlService.Instance.HandleSystemActionAsync(payload, ct));
+
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.KeyPress,
+            (payload, reply, ct) => 
+            {
+                KeyboardControlService.Instance.ProcessIncomingKeyboardEvent(payload);
+                return Task.CompletedTask;
+            });
         
         _log.Info("[RemoteControl] Unified protocol handlers registered");
     }

@@ -33,15 +33,27 @@ public static class UnifiedProtocolClientExtensions
     }
 
     /// <summary>
-    /// Send a key press event.
+    /// Send a control key event for the remote keyboard.
     /// </summary>
     /// <param name="keyCode">Virtual key code</param>
-    /// <param name="state">0=up, 1=down</param>
-    public static async Task SendKeyPressAsync(this UnifiedProtocolClient client, ushort keyCode, byte state, CancellationToken ct)
+    public static async Task SendKeyboardControlKeyAsync(this UnifiedProtocolClient client, short keyCode, CancellationToken ct)
     {
         var payload = new byte[3];
-        BitConverter.GetBytes(keyCode).CopyTo(payload, 0);
-        payload[2] = state;
+        payload[0] = 0; // Type 0 = Control Key
+        BitConverter.GetBytes(keyCode).CopyTo(payload, 1);
+        await client.SendMessageAsync(UnifiedMessageType.KeyPress, payload, ct);
+    }
+
+    /// <summary>
+    /// Send text string for the remote keyboard.
+    /// </summary>
+    /// <param name="text">Text to simulate typing</param>
+    public static async Task SendKeyboardTextAsync(this UnifiedProtocolClient client, string text, CancellationToken ct)
+    {
+        byte[] textBytes = System.Text.Encoding.UTF8.GetBytes(text);
+        var payload = new byte[1 + textBytes.Length];
+        payload[0] = 1; // Type 1 = Text String
+        Array.Copy(textBytes, 0, payload, 1, textBytes.Length);
         await client.SendMessageAsync(UnifiedMessageType.KeyPress, payload, ct);
     }
 
