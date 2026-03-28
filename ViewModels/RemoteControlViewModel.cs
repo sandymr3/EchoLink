@@ -278,6 +278,7 @@ public partial class RemoteControlViewModel : ViewModelBase
                     IsAudioStreaming = sendOk;
                     AudioStatus = sendOk ? "Mic + playback active" : "Audio start failed";
                 }
+                else
                 {
                     var preflightResult = await AudioStreamingService.Instance.SendAudioPreflightAsync(SelectedTarget);
                     if (preflightResult == AudioStreamingService.AudioPreflightResult.Ready)

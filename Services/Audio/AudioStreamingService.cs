@@ -265,13 +265,13 @@ public class AudioStreamingService
                 UnifiedMessageType.AudioPreflightRequest,
                 Array.Empty<byte>(),
                 UnifiedMessageType.AudioPreflightResponse,
-                TimeSpan.FromSeconds(6),
+                TimeSpan.FromSeconds(3),
                 ct);
 
             if (response == null || response.Length == 0)
             {
-                _log.Warning("[Audio] Preflight response missing or empty.");
-                return AudioPreflightResult.Error;
+                _log.Warning("[Audio] Preflight response missing/timeout. Treating as missing dependency.");
+                return AudioPreflightResult.Missing;
             }
 
             bool ready = response[0] != 0;
