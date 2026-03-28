@@ -159,6 +159,32 @@ public class ClipboardSyncService
         await BroadcastClipboardAsync(text, ct);
     }
 
+    /// <summary>
+    /// Manually broadcasts the provided text to all connected peers.
+    /// Used by Android's ProcessTextActivity for user-initiated "Send to PC" action.
+    /// 
+    /// This bypasses Android's background clipboard monitoring restrictions (Android 10+)
+    /// by requiring explicit user consent via the text selection menu.
+    /// </summary>
+    /// <param name="text">The text to broadcast to peers</param>
+    /// <param name="ct">Cancellation token</param>
+    public async Task ManualBroadcastToPeersAsync(string text, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _log.Warning("[ManualBroadcast] No text to broadcast");
+            return;
+        }
+
+        _log.Info($"[ManualBroadcast] User initiated broadcast of {text.Length} chars");
+
+        // Suppress local monitoring to avoid loopback for 2 seconds
+        // This prevents the broadcast text from being re-broadcast if the local clipboard changes
+        _suppressLocalUntilUtc = DateTime.UtcNow.AddSeconds(2);
+
+        await BroadcastClipboardAsync(text, ct);
+    }
+
     public Task UpdateClipboardShareTargetsAsync(IEnumerable<string> targetIps)
     {
         var settings = _settings.Load();

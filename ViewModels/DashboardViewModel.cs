@@ -47,6 +47,8 @@ public partial class DashboardViewModel : ViewModelBase
     private async Task InitializeDashboardAsync()
     {
         await TailscaleService.Instance.CleanupDuplicateNodesAsync();
+        
+        // Initial refresh - Dashboard controls its own refresh cycle
         await RefreshNetworkAsync();
     }
 
@@ -190,6 +192,9 @@ public partial class DashboardViewModel : ViewModelBase
 
         try
         {
+            // Use DeviceDiscoveryService for centralized device management
+            await DeviceDiscoveryService.Instance.RefreshAsync();
+            
             var state = await TailscaleService.Instance.GetBackendStateAsync();
             if (state == "Starting" || state == "NeedsLogin" || state == "NoState" || state == "Unknown")
             {
@@ -212,24 +217,18 @@ public partial class DashboardViewModel : ViewModelBase
                 return;
             }
 
-            string? selfIp = null;
-            var devices = new List<Device>();
+            // Get devices from DeviceDiscoveryService (already filtered and cached)
+            var devices = DeviceDiscoveryService.Instance.CachedDevices;
+            var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+            string? selfIp = DeviceDiscoveryService.Instance.SelfIpAddress;
 
-            for (int attempt = 1; attempt <= 4; attempt++)
-            {
-                (selfIp, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
-                if (selfIp != null) break;
-                await Task.Delay(2000);
-            }
-
-            if (selfIp != null)
+            if (selfIp != null && selfDevice != null)
             {
                 TailscaleIp = selfIp;
                 IsMeshOnline = true;
                 StatusText = "Connected";
-                
-                var selfNode = devices.FirstOrDefault(d => d.IsSelf);
-                bool isGuestNode = selfNode?.Tags?.Contains("tag:guest") ?? false;
+
+                bool isGuestNode = selfDevice.Tags?.Contains("tag:guest") ?? false;
 
                 EcosystemDevices.Clear();
                 GuestDevices.Clear();
@@ -237,7 +236,7 @@ public partial class DashboardViewModel : ViewModelBase
 
                 foreach (var d in devices)
                 {
-                    if (d.IsSelf || d.UserId == selfNode?.UserId)
+                    if (d.IsSelf || d.UserId == selfDevice.UserId)
                     {
                         d.Section = DeviceSection.Ecosystem;
                         if (!isGuestNode) EcosystemDevices.Add(d);
@@ -262,6 +261,8 @@ public partial class DashboardViewModel : ViewModelBase
                         }
                     }
                 }
+                
+                _log.Info($"[Dashboard] Refreshed: {EcosystemDevices.Count} ecosystem, {GuestDevices.Count} guests, {OtherDevices.Count} other devices");
             }
             else
             {

@@ -87,37 +87,13 @@ public class TailscaleService
             _log.Info($"[Tailscale] Android detected. Requesting daemon start via native bridge. Ephemeral={isEphemeral}");
             string userConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string tailscaleDir = Path.Combine(userConfigDir, "EchoLink", "Tailscale");
-            
-            // Start the node
+
+            // Start the node via ForegroundService (runs asynchronously in background)
             NativeBridge?.StartNode(tailscaleDir, authKey, "android-device", "127.0.0.1", isEphemeral);
-            
-            // WAIT for the node to reach a definitive state
-            _log.Info("[Tailscale] Waiting for Android node to reach Running or NeedsLogin state...");
-            for (int i = 0; i < 30; i++) // 15 second timeout
-            {
-                var state = NativeBridge?.GetBackendState();
-                if (state == "Running")
-                {
-                    _log.Info("[Tailscale] Android node started successfully (Running).");
-                    return;
-                }
-                if (state == "NeedsLogin")
-                {
-                    // If we provided an auth key and it's still asking for login, 
-                    // it means the key was likely rejected or ignored.
-                    _log.Warning("[Tailscale] Android node reached NeedsLogin. Auth key may have been invalid.");
-                    return; 
-                }
-                if (state == "Error")
-                {
-                    var err = NativeBridge?.GetLastErrorMsg();
-                    throw new Exception($"Native node failed to start: {err}");
-                }
-                
-                await Task.Delay(500, ct);
-            }
-            
-            _log.Warning("[Tailscale] Timeout waiting for Android node state transition.");
+
+            // Don't wait for state transition - ForegroundService handles startup asynchronously
+            // Login flow continues immediately, dashboard will poll for ready state
+            _log.Info("[Tailscale] Android node start requested. ForegroundService will handle startup.");
             return;
         }
 
@@ -513,17 +489,51 @@ public class TailscaleService
             {
                 var json = NativeBridge?.GetPeerListJson();
                 var settingsData = SettingsService.Instance.Load();
-                
+
                 if (!string.IsNullOrEmpty(json))
                 {
-                    var peerDevices = JsonSerializer.Deserialize<System.Collections.Generic.List<Models.Device>>(json, 
+                    var peerDevices = JsonSerializer.Deserialize<System.Collections.Generic.List<Models.Device>>(json,
                         new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                     if (peerDevices != null)
                     {
+                        // First pass: find self device to get the self user ID
+                        var selfDevice = peerDevices.FirstOrDefault(d => d.IsSelf);
+                        string androidSelfUserId = selfDevice?.UserId ?? "";
+
+                        _log.Debug($"[Tailscale] Android: SelfUserId={androidSelfUserId}, DeviceCount={peerDevices.Count}");
+
+                        // Second pass: set IsPaired for all devices
                         foreach (var peer in peerDevices)
                         {
-                            peer.IsPaired = peer.IsSelf || settingsData.PeerUsernames.ContainsKey(peer.IpAddress);
+                            // Device is paired if: it's self, OR explicitly paired, OR same account (matching UserId)
+                            peer.IsPaired = peer.IsSelf ||
+                                           settingsData.PeerUsernames.ContainsKey(peer.IpAddress) ||
+                                           (!string.IsNullOrEmpty(peer.UserId) && !string.IsNullOrEmpty(androidSelfUserId) && peer.UserId == androidSelfUserId);
                             androidDevices.Add(peer);
+                        }
+                        
+                        // Inject paired devices from PeerUsernames that aren't in the Tailscale peer list yet
+                        // This ensures newly paired devices appear immediately even before Tailscale discovers them
+                        // Check by IP address to avoid duplicating devices that Tailscale has already discovered
+                        var existingIps = new HashSet<string>(peerDevices.Select(d => d.IpAddress), StringComparer.OrdinalIgnoreCase);
+                        foreach (var pairedIp in settingsData.PeerUsernames.Keys)
+                        {
+                            if (!existingIps.Contains(pairedIp))
+                            {
+                                _log.Info($"[Tailscale] Injecting paired device {pairedIp} from settings (not yet visible in Tailscale)");
+                                androidDevices.Add(new Models.Device
+                                {
+                                    Name = "Connecting...", // Temporary name until Tailscale discovers real device
+                                    IpAddress = pairedIp,
+                                    IsOnline = false, // Not yet visible in Tailscale
+                                    IsPaired = true,
+                                    IsSelf = false,
+                                    UserId = "", // Unknown until we see it in Tailscale
+                                    DeviceType = "Desktop",
+                                    Os = "",
+                                    LastSeen = DateTime.UtcNow
+                                });
+                            }
                         }
                     }
                 }
@@ -543,6 +553,7 @@ public class TailscaleService
 
         var devices = new System.Collections.Generic.List<Models.Device>();
         string? selfIp = null;
+        string? selfUserId = null;
 
         try
         {
@@ -561,13 +572,39 @@ public class TailscaleService
             if (root.TryGetProperty("Self", out var self))
             {
                 selfIp = ExtractIpv4(self);
-                devices.Add(ParseDevice(self, isSelf: true, settingsData));
+                var selfDevice = ParseDevice(self, isSelf: true, settingsData);
+                devices.Add(selfDevice);
+                selfUserId = selfDevice.UserId;
             }
 
             if (root.TryGetProperty("Peer", out var peers) && peers.ValueKind == JsonValueKind.Object)
             {
                 foreach (var peer in peers.EnumerateObject())
-                    devices.Add(ParseDevice(peer.Value, isSelf: false, settingsData));
+                    devices.Add(ParseDevice(peer.Value, isSelf: false, settingsData, selfUserId));
+            }
+            
+            // Inject paired devices from PeerUsernames that aren't in Tailscale's peer list yet
+            // This ensures newly paired devices (especially from different accounts) appear immediately
+            // Check by IP address to avoid duplicating devices that Tailscale has already discovered
+            var existingIpsDesktop = new HashSet<string>(devices.Select(d => d.IpAddress), StringComparer.OrdinalIgnoreCase);
+            foreach (var pairedIp in settingsData.PeerUsernames.Keys)
+            {
+                if (!existingIpsDesktop.Contains(pairedIp))
+                {
+                    _log.Info($"[Tailscale] Injecting paired device {pairedIp} from settings (not yet visible in Tailscale)");
+                    devices.Add(new Models.Device
+                    {
+                        Name = "Connecting...", // Temporary name until Tailscale discovers real device
+                        IpAddress = pairedIp,
+                        IsOnline = false, // Not yet visible in Tailscale
+                        IsPaired = true,
+                        IsSelf = false,
+                        UserId = "", // Unknown until we see it in Tailscale
+                        DeviceType = "Desktop",
+                        Os = "",
+                        LastSeen = DateTime.UtcNow
+                    });
+                }
             }
 
             if (deduplicate)
@@ -609,7 +646,7 @@ public class TailscaleService
         return ips.GetArrayLength() > 0 ? ips[0].GetString() : null;
     }
 
-    private static Models.Device ParseDevice(JsonElement node, bool isSelf, SettingsData settingsData)
+    private static Models.Device ParseDevice(JsonElement node, bool isSelf, SettingsData settingsData, string? selfUserId = null)
     {
         string hostName = node.TryGetProperty("HostName", out var hn) ? hn.GetString() ?? "" : "";
         string os = node.TryGetProperty("OS", out var osEl) ? osEl.GetString() ?? "" : "";
@@ -646,7 +683,10 @@ public class TailscaleService
             lastSeen = dt;
         }
 
-        bool isPaired = isSelf || (settingsData.PeerUsernames != null && settingsData.PeerUsernames.ContainsKey(ip));
+        // Device is paired if: it's self, OR explicitly paired (in PeerUsernames), OR same account (matching UserId)
+        bool isPaired = isSelf || 
+                       (settingsData.PeerUsernames != null && settingsData.PeerUsernames.ContainsKey(ip)) ||
+                       (!string.IsNullOrEmpty(userId) && !string.IsNullOrEmpty(selfUserId) && userId == selfUserId);
 
         return new Models.Device
         {

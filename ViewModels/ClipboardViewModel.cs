@@ -31,6 +31,12 @@ public partial class ClipboardViewModel : ViewModelBase
     {
         RefreshFromSettings();
         _ = RefreshShareDevicesAsync();
+        
+        // Subscribe to device discovery events - just update UI from cached data
+        DeviceDiscoveryService.Instance.DeviceListChanged += () =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(async () => await RefreshShareDevicesAsync());
+        };
     }
 
     /// <summary>
@@ -66,7 +72,10 @@ public partial class ClipboardViewModel : ViewModelBase
         try
         {
             var settings = _settings.Load();
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            
+            // Get clipboard share devices from DeviceDiscoveryService (already filtered and cached)
+            // Dashboard or other triggers handle the actual RefreshAsync call
+            var devices = DeviceDiscoveryService.Instance.GetClipboardShareDevices();
 
             foreach (var existing in ShareDevices)
                 existing.PropertyChanged -= OnShareDevicePropertyChanged;
@@ -77,8 +86,8 @@ public partial class ClipboardViewModel : ViewModelBase
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool useTargetSelection = settings.ClipboardUseTargetSelection;
 
-            // Only show devices that are paired (in the user's account or explicitly trusted)
-            foreach (var d in devices.Where(d => !d.IsSelf && d.IsPaired && !string.IsNullOrWhiteSpace(d.IpAddress)))
+            // Show all eligible devices for clipboard sharing
+            foreach (var d in devices)
             {
                 var item = new ClipboardShareDevice
                 {
@@ -94,11 +103,14 @@ public partial class ClipboardViewModel : ViewModelBase
             }
 
             if (ShareDevices.Count == 0)
-                StatusText = "No peer devices available for clipboard share";
+                StatusText = "No peer devices available for clipboard share. Ensure devices are logged in to the same account or explicitly paired.";
+            else
+                StatusText = $"{ShareDevices.Count} device(s) available for clipboard sharing";
         }
         catch (Exception ex)
         {
             _log.Warning($"Clipboard share device refresh failed: {ex.Message}");
+            StatusText = "Failed to refresh devices";
         }
         finally
         {

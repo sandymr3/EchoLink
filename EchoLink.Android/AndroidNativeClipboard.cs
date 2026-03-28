@@ -8,16 +8,19 @@ namespace EchoLink.Services;
 /// <summary>
 /// Android-native clipboard implementation using ClipboardManager system service.
 /// No UIThread required. No Avalonia dependencies.
-/// Uses instant event listener (ClipboardManager.PrimaryClipChanged) instead of polling.
-/// 
+///
 /// Privileges: Runs in context of EchoLinkForegroundService with ForegroundServiceType.TypeDataSync | TypeSpecialUse
 /// This grants elevated clipboard access on Android 10+ (API 29+)
+/// 
+/// NOTE: Background clipboard monitoring (PrimaryClipChanged) has been removed.
+/// Android 10+ blocks background clipboard access for privacy reasons.
+/// Android→PC sync now uses user-initiated "Send to PC" button via ProcessTextActivity.
+/// PC→Android sync still works via SetTextAsync when receiving over Unified Protocol.
 /// </summary>
 public class AndroidNativeClipboard : Java.Lang.Object, IPlatformClipboard
 {
     private readonly ClipboardManager _clipboardManager;
-    private bool _isMonitoring;
-    
+
     public event EventHandler<string>? OnClipboardChanged;
 
     public AndroidNativeClipboard()
@@ -25,13 +28,12 @@ public class AndroidNativeClipboard : Java.Lang.Object, IPlatformClipboard
         // Get system ClipboardManager directly - no UI context needed
         _clipboardManager = (ClipboardManager?)Application.Context?.GetSystemService(Context.ClipboardService)
             ?? throw new InvalidOperationException("ClipboardManager service unavailable");
-        
-        _isMonitoring = false;
     }
 
     /// <summary>
     /// Synchronously get current clipboard text.
     /// Android ClipboardManager methods are blocking but fast.
+    /// Used when receiving clipboard from PC→Android.
     /// </summary>
     public Task<string> GetTextAsync()
     {
@@ -53,7 +55,7 @@ public class AndroidNativeClipboard : Java.Lang.Object, IPlatformClipboard
 
     /// <summary>
     /// Synchronously set clipboard text.
-    /// Android ClipboardManager is fast for this operation.
+    /// Used when receiving clipboard from PC→Android direction.
     /// </summary>
     public Task SetTextAsync(string text)
     {
@@ -70,67 +72,27 @@ public class AndroidNativeClipboard : Java.Lang.Object, IPlatformClipboard
     }
 
     /// <summary>
-    /// Start listening to Android clipboard changes.
-    /// Uses native ClipboardManager.PrimaryClipChanged event (instant, not polling).
+    /// Start monitoring clipboard changes.
+    /// 
+    /// INTENTIONALLY LEFT EMPTY - Android 10+ blocks background clipboard access for privacy.
+    /// The PrimaryClipChanged event will not fire when the app is in the background.
+    /// 
+    /// Android→PC sync now uses user-initiated "Send to PC" button via ProcessTextActivity.
+    /// This provides 100% reliable sync without violating Android's privacy restrictions.
     /// </summary>
     public void StartMonitoring()
     {
-        if (_isMonitoring)
-            return;
-
-        try
-        {
-            _clipboardManager.PrimaryClipChanged += ClipboardManager_PrimaryClipChanged;
-            _isMonitoring = true;
-            System.Console.WriteLine("[AndroidClipboard] Monitoring started");
-        }
-        catch (Exception ex)
-        {
-            System.Console.WriteLine($"[AndroidClipboard] StartMonitoring failed: {ex.Message}");
-        }
+        // Intentionally left empty - we no longer monitor Android clipboard in background
+        // Android OS blocks background clipboard access for privacy (Android 10+)
+        // We rely entirely on user-initiated "Send to PC" button via ProcessTextActivity
     }
 
     /// <summary>
-    /// Stop listening to clipboard changes and clean up resources.
+    /// Stop monitoring clipboard changes.
+    /// Intentionally left empty since StartMonitoring does nothing.
     /// </summary>
     public void StopMonitoring()
     {
-        if (!_isMonitoring)
-            return;
-
-        try
-        {
-            _clipboardManager.PrimaryClipChanged -= ClipboardManager_PrimaryClipChanged;
-            _isMonitoring = false;
-            System.Console.WriteLine("[AndroidClipboard] Monitoring stopped");
-        }
-        catch (Exception ex)
-        {
-            System.Console.WriteLine($"[AndroidClipboard] StopMonitoring failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Invoked instantly when user copies something on Android device.
-    /// Reads new text and fires OnClipboardChanged event asynchronously.
-    /// </summary>
-    private void ClipboardManager_PrimaryClipChanged(object? sender, EventArgs e)
-    {
-        // Fire event on background thread to avoid blocking clipboard system
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                string newText = await GetTextAsync();
-                if (!string.IsNullOrEmpty(newText))
-                {
-                    OnClipboardChanged?.Invoke(this, newText);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Console.WriteLine($"[AndroidClipboard] ClipboardChanged handler failed: {ex.Message}");
-            }
-        });
+        // Intentionally left empty - no listener to detach
     }
 }

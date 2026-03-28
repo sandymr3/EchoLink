@@ -27,6 +27,12 @@ public partial class RemoteControlViewModel : ViewModelBase
     public RemoteControlViewModel()
     {
         _ = LoadDevicesAsync();
+        
+        // Subscribe to device discovery events - just update UI from cached data
+        DeviceDiscoveryService.Instance.DeviceListChanged += () =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoadDevicesAsync());
+        };
     }
 
     [RelayCommand]
@@ -34,14 +40,14 @@ public partial class RemoteControlViewModel : ViewModelBase
     {
         try
         {
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
+            // Dashboard controls the actual RefreshAsync call
+            var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
+            
             OnlineDevices.Clear();
             foreach (var device in devices)
             {
-                if (device.IsOnline && !device.IsSelf)
-                {
-                    OnlineDevices.Add(device);
-                }
+                OnlineDevices.Add(device);
             }
         }
         catch (Exception ex)

@@ -55,6 +55,12 @@ public partial class MacrosViewModel : ViewModelBase
         MacroService.Instance.MacrosChanged += OnExternalMacrosChanged;
         LoadMacros();
         _ = LoadDevicesAsync();
+        
+        // Subscribe to device discovery events - just update UI from cached data
+        DeviceDiscoveryService.Instance.DeviceListChanged += () =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoadDevicesAsync());
+        };
     }
 
     // ── Loading ──────────────────────────────────────────────────────────
@@ -77,13 +83,19 @@ public partial class MacrosViewModel : ViewModelBase
     {
         try
         {
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
+            // Dashboard controls the actual RefreshAsync call
+            var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
+            
             OnlineDevices.Clear();
 
-            // Include self + all online peers
+            // Include self + all online eligible peers
+            var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+            if (selfDevice != null)
+                OnlineDevices.Add(selfDevice);
+                
             foreach (var d in devices)
-                if (d.IsOnline)
-                    OnlineDevices.Add(d);
+                OnlineDevices.Add(d);
         }
         catch (Exception ex)
         {

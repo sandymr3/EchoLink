@@ -42,6 +42,12 @@ public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
     {
         _ = LoadDevicesAsync();
         SystemMonitorService.Instance.SnapshotReceived += OnSnapshotReceived;
+
+        // Subscribe to device discovery events - just update UI from cached data
+        DeviceDiscoveryService.Instance.DeviceListChanged += () =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoadDevicesAsync());
+        };
     }
 
     private void OnSnapshotReceived(SystemMetricsSnapshot snapshot)
@@ -75,11 +81,13 @@ public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
+            // Dashboard controls the actual RefreshAsync call
+            var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
+            
             OnlineDevices.Clear();
             foreach (var d in devices)
-                if (d.IsOnline && !d.IsSelf)
-                    OnlineDevices.Add(d);
+                OnlineDevices.Add(d);
         }
         catch (Exception ex)
         {

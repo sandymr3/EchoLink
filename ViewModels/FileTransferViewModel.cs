@@ -39,6 +39,12 @@ public partial class FileTransferViewModel : ViewModelBase
     public FileTransferViewModel()
     {
         _ = LoadDevicesAsync();
+        
+        // Subscribe to device discovery events for automatic refresh
+        DeviceDiscoveryService.Instance.DeviceListChanged += () =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => LoadDevicesAsync());
+        };
     }
 
     partial void OnSelectedTargetChanged(Device? value)
@@ -56,11 +62,13 @@ public partial class FileTransferViewModel : ViewModelBase
     {
         try
         {
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
+            // Use DeviceDiscoveryService to get only paired + online devices
+            // This ensures File Transfer only shows devices from same account or explicitly paired
+            var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
+            
             OnlineDevices.Clear();
             foreach (var d in devices)
-                if (d.IsOnline && !d.IsSelf)
-                    OnlineDevices.Add(d);
+                OnlineDevices.Add(d);
         }
         catch (Exception ex)
         {
