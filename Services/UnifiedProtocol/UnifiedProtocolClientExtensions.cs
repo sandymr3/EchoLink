@@ -91,6 +91,14 @@ public static class UnifiedProtocolClientExtensions
     }
 
     /// <summary>
+    /// Send an audio preflight request before starting capture/streaming.
+    /// </summary>
+    public static async Task SendAudioPreflightRequestAsync(this UnifiedProtocolClient client, CancellationToken ct)
+    {
+        await client.SendMessageAsync(UnifiedMessageType.AudioPreflightRequest, Array.Empty<byte>(), ct);
+    }
+
+    /// <summary>
     /// Send a ping message for latency measurement.
     /// </summary>
     /// <param name="timestamp">Unix timestamp in milliseconds</param>

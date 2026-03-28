@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -25,6 +26,10 @@ public partial class RemoteControlViewModel : ViewModelBase
     [ObservableProperty] private string _trackpadStatus = "Trackpad ready";
     [ObservableProperty] private string _audioStatus = "Audio idle";
     [ObservableProperty] private bool _isAudioStreaming;
+    [ObservableProperty] private bool _isAudioConnecting;
+    [ObservableProperty] private bool _isAudioSetupDialogVisible;
+    [ObservableProperty] private bool _isAudioSetupChecking;
+    [ObservableProperty] private string _audioSetupDialogErrorText = string.Empty;
     [ObservableProperty] private bool _isTrackpadExpanded;
 
     public string TrackpadExpandIcon => IsTrackpadExpanded ? "▼" : "▲";
@@ -37,6 +42,28 @@ public partial class RemoteControlViewModel : ViewModelBase
     private double _lastX;
     private double _lastY;
     private bool   _isDragging;
+
+    public bool CanStartAudio => !IsAudioStreaming && !IsAudioConnecting;
+    public bool CanStopAudio => IsAudioStreaming || IsAudioConnecting;
+
+    public string AudioSetupDialogTitle => "System Audio Setup Required";
+    public string AudioSetupDialogMessage =>
+        "To stream high-quality system audio from Windows, EchoLink requires the free VB-Cable Virtual Audio Device. Please install it on the target PC.";
+    public string AudioSetupContinueButtonText => IsAudioSetupChecking ? "Checking..." : "Continue to audio streaming";
+    public bool CanContinueAudioSetup => !IsAudioSetupChecking;
+    public bool CanCancelAudioSetup => !IsAudioSetupChecking;
+    public bool HasAudioSetupDialogError => !string.IsNullOrWhiteSpace(AudioSetupDialogErrorText);
+
+    public bool CanStartAudio => !IsAudioStreaming && !IsAudioConnecting;
+    public bool CanStopAudio => IsAudioStreaming || IsAudioConnecting;
+
+    public string AudioSetupDialogTitle => "System Audio Setup Required";
+    public string AudioSetupDialogMessage =>
+        "To stream high-quality system audio from Windows, EchoLink requires the free VB-Cable Virtual Audio Device. Please install it on the target PC.";
+    public string AudioSetupContinueButtonText => IsAudioSetupChecking ? "Checking..." : "Continue to audio streaming";
+    public bool CanContinueAudioSetup => !IsAudioSetupChecking;
+    public bool CanCancelAudioSetup => !IsAudioSetupChecking;
+    public bool HasAudioSetupDialogError => !string.IsNullOrWhiteSpace(AudioSetupDialogErrorText);
 
     // Android→PC Keyboard state (phone types, PC receives)
     private bool _isResetting = false;
@@ -111,6 +138,10 @@ public partial class RemoteControlViewModel : ViewModelBase
     {
         await AudioStreamingService.Instance.StopAllAsync();
         IsAudioStreaming = false;
+        IsAudioConnecting = false;
+        IsAudioSetupDialogVisible = false;
+        IsAudioSetupChecking = false;
+        AudioSetupDialogErrorText = string.Empty;
         AudioStatus = "Audio idle";
         ResetKeyboardTrap();
 
@@ -212,6 +243,11 @@ public partial class RemoteControlViewModel : ViewModelBase
     [RelayCommand]
     private async Task StartAudioAsync()
     {
+        if (IsAudioConnecting)
+        {
+            return;
+        }
+
         if (SelectedTarget == null)
         {
             AudioStatus = "Select a target device first";
@@ -221,18 +257,51 @@ public partial class RemoteControlViewModel : ViewModelBase
         try
         {
             await AudioStreamingService.Instance.StopAllAsync();
+            IsAudioStreaming = false;
+            IsAudioConnecting = false;
 
             bool sendOk;
 
-            if (OperatingSystem.IsAndroid())
+            if (OperatingSystem.IsAndroid() || OperatingSystem.IsLinux())
             {
-                // Send Android mic via low-latency unified protocol over mesh
-                sendOk = await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget);
+                // Sender-side guard: only run VB-Cable preflight when the target is Windows.
+                IsAudioConnecting = true;
+                AudioStatus = "Connecting...";
+                IsAudioSetupDialogVisible = false;
+                IsAudioSetupChecking = false;
+                AudioSetupDialogErrorText = string.Empty;
 
-                IsAudioStreaming = sendOk;
-                AudioStatus = sendOk
-                    ? "Mic + playback active"
-                    : "Audio start failed";
+                if (!ShouldRunWindowsAudioPreflight(SelectedTarget))
+                {
+                    sendOk = await StartNormalAudioStreamingAsync();
+                    IsAudioConnecting = false;
+                    IsAudioStreaming = sendOk;
+                    AudioStatus = sendOk ? "Mic + playback active" : "Audio start failed";
+                }
+                {
+                    var preflightResult = await AudioStreamingService.Instance.SendAudioPreflightAsync(SelectedTarget);
+                    if (preflightResult == AudioStreamingService.AudioPreflightResult.Ready)
+                    {
+                        sendOk = await StartNormalAudioStreamingAsync();
+                        IsAudioConnecting = false;
+                        IsAudioStreaming = sendOk;
+                        AudioStatus = sendOk ? "Mic + playback active" : "Audio start failed";
+                    }
+                    else if (preflightResult == AudioStreamingService.AudioPreflightResult.Missing)
+                    {
+                        IsAudioConnecting = false;
+                        IsAudioStreaming = false;
+                        AudioStatus = "System audio setup required";
+                        IsAudioSetupDialogVisible = true;
+                        AudioSetupDialogErrorText = string.Empty;
+                    }
+                    else
+                    {
+                        IsAudioConnecting = false;
+                        IsAudioStreaming = false;
+                        AudioStatus = "Audio preflight failed";
+                    }
+                }
             }
             else
             {
@@ -247,6 +316,7 @@ public partial class RemoteControlViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            IsAudioConnecting = false;
             IsAudioStreaming = false;
             AudioStatus = $"Audio error: {ex.Message}";
             _log.Error($"[RemoteControl] Audio start failed: {ex.Message}");
@@ -257,8 +327,165 @@ public partial class RemoteControlViewModel : ViewModelBase
     private async Task StopAudioAsync()
     {
         await AudioStreamingService.Instance.StopAllAsync();
+        IsAudioConnecting = false;
         IsAudioStreaming = false;
+        IsAudioSetupDialogVisible = false;
+        IsAudioSetupChecking = false;
+        AudioSetupDialogErrorText = string.Empty;
         AudioStatus = "Audio stopped";
+    }
+
+    [RelayCommand]
+    private void OpenAudioSetupLink()
+    {
+        const string url = "https://vb-audio.com/Cable/";
+        OpenBrowser(url);
+    }
+
+    [RelayCommand]
+    private async Task ContinueAudioStreamingAsync()
+    {
+        if (!IsAudioSetupDialogVisible || SelectedTarget == null || IsAudioSetupChecking)
+        {
+            return;
+        }
+
+        IsAudioSetupChecking = true;
+        AudioSetupDialogErrorText = string.Empty;
+
+        try
+        {
+            if (!ShouldRunWindowsAudioPreflight(SelectedTarget))
+            {
+                IsAudioSetupDialogVisible = false;
+                IsAudioConnecting = true;
+                AudioStatus = "Connecting...";
+
+                bool directSendOk = await StartNormalAudioStreamingAsync();
+                IsAudioConnecting = false;
+                IsAudioStreaming = directSendOk;
+                AudioStatus = directSendOk ? "Mic + playback active" : "Audio start failed";
+                return;
+            }
+
+            var recheckResult = await AudioStreamingService.Instance.SendAudioPreflightAsync(SelectedTarget);
+            if (recheckResult == AudioStreamingService.AudioPreflightResult.Ready)
+            {
+                IsAudioSetupDialogVisible = false;
+                IsAudioConnecting = true;
+                AudioStatus = "Connecting...";
+
+                bool sendOk = await StartNormalAudioStreamingAsync();
+                IsAudioConnecting = false;
+                IsAudioStreaming = sendOk;
+                AudioStatus = sendOk ? "Mic + playback active" : "Audio start failed";
+            }
+            else if (recheckResult == AudioStreamingService.AudioPreflightResult.Missing)
+            {
+                IsAudioStreaming = false;
+                AudioSetupDialogErrorText = "VB-Cable is still not detected on the target PC. Please ensure it is installed, set as the default playback device, and try again.";
+                AudioStatus = "System audio setup required";
+            }
+            else
+            {
+                IsAudioStreaming = false;
+                AudioSetupDialogErrorText = "Re-check failed due to a connection error. Please retry.";
+                AudioStatus = "Audio preflight failed";
+            }
+        }
+        finally
+        {
+            IsAudioSetupChecking = false;
+        }
+    }
+
+    private static bool ShouldRunWindowsAudioPreflight(Device target)
+    {
+        return string.Equals(target.Os, "Windows", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [RelayCommand]
+    private void CancelAudioSetup()
+    {
+        IsAudioSetupDialogVisible = false;
+        IsAudioSetupChecking = false;
+        AudioSetupDialogErrorText = string.Empty;
+        IsAudioConnecting = false;
+        IsAudioStreaming = false;
+        AudioStatus = "Audio setup cancelled";
+    }
+
+    private async Task<bool> StartNormalAudioStreamingAsync()
+    {
+        if (SelectedTarget == null)
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsAndroid())
+        {
+            return await AudioStreamingService.Instance.StartMicrophoneSendAsync(SelectedTarget);
+        }
+
+        return await AudioStreamingService.Instance.StartLoopbackSendAsync(SelectedTarget);
+    }
+
+    private static void OpenBrowser(string url)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                Process.Start(new ProcessStartInfo("cmd", $"/c start {url.Replace("&", "^&")}") { CreateNoWindow = true });
+                return;
+            }
+
+            if (OperatingSystem.IsLinux())
+            {
+                Process.Start("xdg-open", url);
+                return;
+            }
+
+            if (OperatingSystem.IsMacOS())
+            {
+                Process.Start("open", url);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            LoggingService.Instance.Error($"[RemoteControl] Failed to open browser: {ex.Message}");
+        }
+    }
+
+    partial void OnIsAudioStreamingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanStartAudio));
+        OnPropertyChanged(nameof(CanStopAudio));
+    }
+
+    partial void OnIsAudioConnectingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanStartAudio));
+        OnPropertyChanged(nameof(CanStopAudio));
+    }
+
+    partial void OnIsAudioSetupCheckingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(AudioSetupContinueButtonText));
+        OnPropertyChanged(nameof(CanContinueAudioSetup));
+        OnPropertyChanged(nameof(CanCancelAudioSetup));
+    }
+
+    partial void OnAudioSetupDialogErrorTextChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasAudioSetupDialogError));
     }
 
     // ── PC Keyboard Routing (PC → Android) ────────────────────────────────────

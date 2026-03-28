@@ -215,7 +215,20 @@ public class TailscaleService
             };
             _log.Info($"[Tailscale] Running up command: {upPsi.FileName} {upPsi.Arguments}");
             var upProcess = Process.Start(upPsi);
-            if (upProcess != null) await upProcess.WaitForExitAsync(ct);
+            if (upProcess != null)
+            {
+                using var upTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                upTimeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await upProcess.WaitForExitAsync(upTimeoutCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    _log.Warning("[Tailscale] 'tailscale up' did not exit within 15s; continuing startup in degraded mode.");
+                    try { if (!upProcess.HasExited) upProcess.Kill(entireProcessTree: true); } catch { }
+                }
+            }
 
             _ = Task.Run(async () =>
             {

@@ -1,5 +1,6 @@
 using Concentus.Enums;
 using Concentus.Structs;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using System.Net;
 using System.Net.Sockets;
@@ -9,6 +10,13 @@ namespace EchoLink.Services;
 
 public class AudioStreamingService
 {
+    public enum AudioPreflightResult
+    {
+        Ready,
+        Missing,
+        Error,
+    }
+
     private static readonly Lazy<AudioStreamingService> _instance = new(() => new AudioStreamingService());
     public static AudioStreamingService Instance => _instance.Value;
 
@@ -238,6 +246,46 @@ public class AudioStreamingService
             UnifiedProtocolService.UnifiedPort,
             NetworkService.TailscaleSocks5Port,
             ct);
+    }
+
+    /// <summary>
+    /// Sends a lightweight preflight request to the peer before starting audio capture.
+    /// </summary>
+    public async Task<AudioPreflightResult> SendAudioPreflightAsync(Models.Device target, CancellationToken ct = default)
+    {
+        if (!await ConnectSendStreamAsync(target, ct))
+        {
+            _log.Warning("[Audio] Preflight failed: unable to connect unified stream.");
+            return AudioPreflightResult.Error;
+        }
+
+        try
+        {
+            byte[]? response = await UnifiedProtocolClient.Instance.SendRequestAndWaitForResponseAsync(
+                UnifiedMessageType.AudioPreflightRequest,
+                Array.Empty<byte>(),
+                UnifiedMessageType.AudioPreflightResponse,
+                TimeSpan.FromSeconds(6),
+                ct);
+
+            if (response == null || response.Length == 0)
+            {
+                _log.Warning("[Audio] Preflight response missing or empty.");
+                return AudioPreflightResult.Error;
+            }
+
+            bool ready = response[0] != 0;
+            _log.Info(ready
+                ? $"[Audio] Preflight response from {target.IpAddress}: READY"
+                : $"[Audio] Preflight response from {target.IpAddress}: MISSING");
+
+            return ready ? AudioPreflightResult.Ready : AudioPreflightResult.Missing;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Audio] Preflight request failed: {ex.Message}");
+            return AudioPreflightResult.Error;
+        }
     }
 
     private void DisconnectSendStream()
@@ -477,8 +525,60 @@ public class AudioStreamingService
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.AudioFrame,
             async (payload, reply, ct) => await HandleAudioFrameUnifiedAsync(payload, ct));
+
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.AudioPreflightRequest,
+            async (payload, reply, ct) => await HandleAudioPreflightRequestUnifiedAsync(reply, ct));
         
         _log.Info("[AudioStreaming] Unified protocol handler registered");
+    }
+
+    private async Task HandleAudioPreflightRequestUnifiedAsync(Func<UnifiedMessageType, byte[], Task> reply, CancellationToken ct)
+    {
+        _log.Info("[AudioStreaming] Received audio preflight request.");
+
+        bool ready = IsAudioPreflightReady();
+        var responsePayload = new[] { ready ? (byte)1 : (byte)0 };
+
+        _log.Info(ready
+            ? "[AudioStreaming] Preflight ready: compatible capture device found."
+            : "[AudioStreaming] Preflight missing: no compatible capture device found.");
+
+        await reply(UnifiedMessageType.AudioPreflightResponse, responsePayload);
+        await Task.CompletedTask;
+    }
+
+    private bool IsAudioPreflightReady()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            var captureDevices = enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+
+            foreach (var device in captureDevices)
+            {
+                var name = device.FriendlyName ?? string.Empty;
+                _log.Debug($"[AudioStreaming] Preflight capture device: {name}");
+
+                if (name.Contains("CABLE Output", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("VB-Audio", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[AudioStreaming] Preflight hardware check failed: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>

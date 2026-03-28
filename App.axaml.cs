@@ -9,6 +9,7 @@ using EchoLink.ViewModels;
 using EchoLink.Views;
 using EchoLink.Services;
 using System;
+using System.Threading;
 
 namespace EchoLink;
 
@@ -56,6 +57,18 @@ public partial class App : Application
         {
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
 
+            // Show a visible startup window immediately so desktop mode never starts headless.
+            var loadingWindow = new Avalonia.Controls.Window
+            {
+                Title = "EchoLink",
+                Width = 420,
+                Height = 240,
+                CanResize = false,
+                Content = new LoadingView(),
+            };
+            desktop.MainWindow = loadingWindow;
+            loadingWindow.Show();
+
             // Hook cleanup
             desktop.Exit += async (_, _) =>
             {
@@ -96,15 +109,20 @@ public partial class App : Application
             if (settings.IsLoggedIn)
             {
                 _log.Info("[Startup] User was logged in. Auto-starting Tailscale daemon...");
-                await TailscaleService.Instance.StartDaemonAsync(null!, false);
+                using var daemonCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                await TailscaleService.Instance.StartDaemonAsync(null!, false, daemonCts.Token);
+                _log.Info("[Startup] Tailscale daemon startup step finished.");
             }
 
             // Give the service/daemon time to initialize
+            _log.Info("[Startup] Waiting briefly for daemon stabilization...");
             await Task.Delay(2000);
 
             _log.Info("[Startup] Checking connection status...");
             bool running = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(10));
-            string state = await TailscaleService.Instance.GetBackendStateAsync();
+
+            using var stateCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            string state = await TailscaleService.Instance.GetBackendStateAsync(stateCts.Token);
 
             // On Android, "TryBringUpAsync" just waits for the daemon state.
             // If it returns true OR the state is already Running, we are good to go.
@@ -121,9 +139,14 @@ public partial class App : Application
                 NavigateToLogin(lifetime);
             }
         }
+        catch (OperationCanceledException)
+        {
+            _log.Warning("[Startup] Initialization timed out. Opening Login.");
+            NavigateToLogin(lifetime);
+        }
         catch (Exception ex)
         {
-            _log.Error($"[Startup] Initialization failed: {ex.Message}");
+            _log.Error($"[Startup] Initialization failed: {ex}");
             NavigateToLogin(lifetime);
         }
     }

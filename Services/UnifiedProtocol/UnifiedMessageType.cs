@@ -13,8 +13,10 @@ public enum UnifiedMessageType : byte
     Scroll = 0x04,
     SystemAction = 0x05,
     
-    // === Audio Streaming (0x06) ===
+    // === Audio Streaming (0x06, 0x0E-0x0F) ===
     AudioFrame = 0x06,
+    AudioPreflightRequest = 0x0E,
+    AudioPreflightResponse = 0x0F,
     
     // === System Monitor (0x07-0x08) ===
     MonitorRequest = 0x07,

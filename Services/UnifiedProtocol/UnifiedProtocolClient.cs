@@ -21,6 +21,7 @@ public class UnifiedProtocolClient
     private Stream? _stream;
     private TcpClient? _tcpClient;
     private CancellationTokenSource? _readCts;
+    private readonly SemaphoreSlim _streamIoLock = new(1, 1);
 
     /// <summary>
     /// Returns true if connected to a remote device.
@@ -118,25 +119,138 @@ public class UnifiedProtocolClient
 
         try
         {
-            // Build header: [Type:1][Length:4 big-endian]
-            var header = new byte[5];
-            header[0] = (byte)type;
-            // Big-endian for network byte order
-            var lengthBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload.Length));
-            Array.Copy(lengthBytes, 0, header, 1, 4);
-
-            await _stream.WriteAsync(header, ct);
-            if (payload.Length > 0)
+            await _streamIoLock.WaitAsync(ct);
+            try
             {
-                await _stream.WriteAsync(payload, ct);
+                await WriteMessageAsync(type, payload, ct);
             }
-            await _stream.FlushAsync(ct);
+            finally
+            {
+                _streamIoLock.Release();
+            }
         }
         catch (Exception ex)
         {
             _log.Error($"[Unified] Send failed: {ex.Message}");
             Disconnect();
         }
+    }
+
+    /// <summary>
+    /// Send a request and wait for a specific response type on the same stream.
+    /// </summary>
+    public async Task<byte[]?> SendRequestAndWaitForResponseAsync(
+        UnifiedMessageType requestType,
+        byte[] requestPayload,
+        UnifiedMessageType expectedResponseType,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        if (_stream == null)
+        {
+            _log.Warning("[Unified] Cannot request/response - not connected");
+            return null;
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeout);
+        var linkedCt = timeoutCts.Token;
+
+        try
+        {
+            await _streamIoLock.WaitAsync(linkedCt);
+            try
+            {
+                await WriteMessageAsync(requestType, requestPayload, linkedCt);
+
+                var header = new byte[5];
+                int readHeader = await ReadExactAsync(_stream, header, 0, header.Length, linkedCt);
+                if (readHeader < header.Length)
+                {
+                    _log.Warning("[Unified] Response header read incomplete.");
+                    return null;
+                }
+
+                var responseType = (UnifiedMessageType)header[0];
+                int payloadLen = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(header, 1));
+                if (payloadLen < 0)
+                {
+                    _log.Warning("[Unified] Invalid response payload length.");
+                    return null;
+                }
+
+                byte[] payload = Array.Empty<byte>();
+                if (payloadLen > 0)
+                {
+                    payload = new byte[payloadLen];
+                    int readPayload = await ReadExactAsync(_stream, payload, 0, payloadLen, linkedCt);
+                    if (readPayload < payloadLen)
+                    {
+                        _log.Warning("[Unified] Response payload read incomplete.");
+                        return null;
+                    }
+                }
+
+                if (responseType != expectedResponseType)
+                {
+                    _log.Warning($"[Unified] Unexpected response type: {responseType} (expected {expectedResponseType})");
+                    return null;
+                }
+
+                return payload;
+            }
+            finally
+            {
+                _streamIoLock.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _log.Warning("[Unified] Request/response timed out or was canceled.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[Unified] Request/response failed: {ex.Message}");
+            Disconnect();
+            return null;
+        }
+    }
+
+    private async Task WriteMessageAsync(UnifiedMessageType type, byte[] payload, CancellationToken ct)
+    {
+        if (_stream == null)
+        {
+            throw new IOException("Unified stream is not connected.");
+        }
+
+        var header = new byte[5];
+        header[0] = (byte)type;
+        var lengthBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload.Length));
+        Array.Copy(lengthBytes, 0, header, 1, 4);
+
+        await _stream.WriteAsync(header, ct);
+        if (payload.Length > 0)
+        {
+            await _stream.WriteAsync(payload, ct);
+        }
+        await _stream.FlushAsync(ct);
+    }
+
+    private static async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int offset, int count, CancellationToken ct)
+    {
+        int totalRead = 0;
+        while (totalRead < count)
+        {
+            int read = await stream.ReadAsync(buffer, offset + totalRead, count - totalRead, ct);
+            if (read == 0)
+            {
+                break;
+            }
+            totalRead += read;
+        }
+
+        return totalRead;
     }
 
     private async Task ReadLoopAsync(Stream stream, CancellationToken ct)
