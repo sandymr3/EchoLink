@@ -9,7 +9,8 @@
              x:DataType="vm:RemoteControlViewModel"
              Background="Transparent">
 
-    <DockPanel Margin="32,24">
+    <ScrollViewer>
+        <DockPanel Margin="32,24,32,100">
 
         <!-- Header -->
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,24">
@@ -199,5 +200,6 @@
             </Border>
         </StackPanel>
 
-    </DockPanel>
+        </DockPanel>
+    </ScrollViewer>
 </UserControl>

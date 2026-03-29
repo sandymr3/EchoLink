@@ -9,7 +9,8 @@
              x:DataType="vm:SystemMonitorViewModel"
              Background="Transparent">
 
-    <DockPanel Margin="32,24">
+    <ScrollViewer>
+        <DockPanel Margin="32,24,32,100">
 
         <!-- Header -->
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,24">
@@ -153,5 +154,6 @@
             </StackPanel>
         </Border>
 
-    </DockPanel>
+        </DockPanel>
+    </ScrollViewer>
 </UserControl>

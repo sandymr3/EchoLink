@@ -16,7 +16,7 @@
                                    FalseColor="#FF5252"/>
     </UserControl.Resources>
 
-    <ScrollViewer Padding="32,24">
+    <ScrollViewer Padding="32,24,32,100">
         <StackPanel Spacing="24">
 
             <!-- Header -->

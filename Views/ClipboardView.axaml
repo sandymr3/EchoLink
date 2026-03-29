@@ -9,7 +9,8 @@
              x:DataType="vm:ClipboardViewModel"
              Background="Transparent">
 
-    <DockPanel Margin="32,24">
+    <ScrollViewer>
+        <DockPanel Margin="32,24,32,100">
 
         <!-- Header -->
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,20">
@@ -149,8 +150,7 @@
         </StackPanel>
 
         <!-- Clipboard history feed -->
-        <ScrollViewer>
-            <ItemsControl ItemsSource="{Binding History}">
+        <ItemsControl ItemsSource="{Binding History}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="m:ClipboardEntry">
                         <!-- Chat-bubble style card -->
@@ -206,7 +206,7 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-        </ScrollViewer>
 
-    </DockPanel>
+        </DockPanel>
+    </ScrollViewer>
 </UserControl>

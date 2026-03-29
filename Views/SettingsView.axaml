@@ -10,7 +10,7 @@
              Background="Transparent">
 
     <ScrollViewer>
-        <DockPanel Margin="32,24" LastChildFill="False">
+        <DockPanel Margin="32,24,32,100" LastChildFill="False">
 
             <!-- Header -->
             <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,24">
