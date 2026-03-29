@@ -7,12 +7,14 @@ using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
 using EchoLink.Services;
 using EchoLink.Services.UnifiedProtocol;
+using EchoLink.Services.RemoteControl;
 
 namespace EchoLink.ViewModels;
 
 public partial class RemoteControlViewModel : ViewModelBase
 {
     private readonly LoggingService _log = LoggingService.Instance;
+    private readonly DesktopKeyboardSender? _keyboardSender;
 
     [ObservableProperty] private Device? _selectedTarget;
     public ObservableCollection<Device> OnlineDevices { get; } = new();
@@ -24,24 +26,43 @@ public partial class RemoteControlViewModel : ViewModelBase
     [ObservableProperty] private string _audioStatus = "Audio idle";
     [ObservableProperty] private bool _isAudioStreaming;
 
+    // PC Keyboard routing state
+    [ObservableProperty] private bool _isPcKeyboardRoutingEnabled;
+    [ObservableProperty] private string _pcKeyboardStatus = "PC Keyboard routing disabled";
+
     private double _lastX;
     private double _lastY;
     private bool   _isDragging;
 
-    // Keyboard state
+    // Android→PC Keyboard state (phone types, PC receives)
     private bool _isResetting = false;
     private string _previousText = " ";
     public Action? RequestKeyboardReset { get; set; }
 
     public RemoteControlViewModel()
     {
+        // Initialize PC→Android keyboard sender
+        _keyboardSender = new DesktopKeyboardSender();
+        _keyboardSender.RoutingStateChanged += OnRoutingStateChanged;
+        _keyboardSender.Start();
+
         _ = LoadDevicesAsync();
-        
+
         // Subscribe to device discovery events - just update UI from cached data
         DeviceDiscoveryService.Instance.DeviceListChanged += () =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() => LoadDevicesAsync());
         };
+    }
+
+    private void OnRoutingStateChanged(bool isActive)
+    {
+        IsPcKeyboardRoutingEnabled = isActive;
+        PcKeyboardStatus = isActive
+            ? "PC Keyboard routing ACTIVE - Press Ctrl+Alt+K to disable"
+            : "PC Keyboard routing disabled - Press Ctrl+Alt+K to enable";
+
+        _log.Info($"[RemoteControl] PC Keyboard routing: {(isActive ? "ENABLED" : "DISABLED")}");
     }
 
     [RelayCommand]
@@ -219,6 +240,14 @@ public partial class RemoteControlViewModel : ViewModelBase
         await AudioStreamingService.Instance.StopAllAsync();
         IsAudioStreaming = false;
         AudioStatus = "Audio stopped";
+    }
+
+    // ── PC Keyboard Routing (PC → Android) ────────────────────────────────────
+
+    [RelayCommand]
+    private void TogglePcKeyboardRouting()
+    {
+        _keyboardSender?.ToggleRouting();
     }
 
     // ── Quick Actions ─────────────────────────────────────────────────────────

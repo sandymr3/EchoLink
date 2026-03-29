@@ -15,13 +15,13 @@
         TransparencyLevelHint="AcrylicBlur"
         xmlns:conv="using:EchoLink.Converters">
 
-    <Window.Resources>
-        <conv:BoolToColorConverter x:Key="SshStatusColor" TrueColor="#00E676" FalseColor="#FF5252"/>
-    </Window.Resources>
-
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
+
+    <Window.Resources>
+        <conv:BoolToColorConverter x:Key="SshStatusColor" TrueColor="#00E676" FalseColor="#FF5252"/>
+    </Window.Resources>
 
     <!-- Root grid: full window -->
     <Grid ColumnDefinitions="Auto,*">

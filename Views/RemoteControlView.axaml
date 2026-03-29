@@ -119,6 +119,53 @@
             </StackPanel>
         </Border>
 
+        <!-- PC Keyboard Routing (PC → Android) -->
+        <Border DockPanel.Dock="Top" Classes="Card" Margin="0,0,0,20">
+            <StackPanel Spacing="12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="PC Keyboard (Type on PC → Phone)"
+                               FontSize="13" FontWeight="SemiBold"
+                               Foreground="#B3B3B3"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding PcKeyboardStatus}"
+                               FontSize="12"
+                               Foreground="#00E5FF"
+                               VerticalAlignment="Center"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <Button Grid.Column="0"
+                            Classes="Primary"
+                            Command="{Binding TogglePcKeyboardRoutingCommand}"
+                            Content="{Binding IsPcKeyboardRoutingEnabled, FallbackValue='Enable PC Keyboard'}"/>
+
+                    <Border Grid.Column="1"
+                            Background="#1A1A1A"
+                            CornerRadius="8"
+                            Padding="12,8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Hotkey:"
+                                       FontSize="11"
+                                       Foreground="#666666"
+                                       VerticalAlignment="Center"/>
+                            <Border Background="#333333" CornerRadius="4" Padding="6,2">
+                                <TextBlock Text="Ctrl+Alt+K"
+                                           FontSize="11"
+                                           Foreground="#FFFFFF"
+                                           FontWeight="SemiBold"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <TextBlock Text="Select 'EchoLink Remote Keyboard' on your phone to receive input"
+                           FontSize="11"
+                           Foreground="#666666"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
         <!-- Keyboard & Trackpad area -->
         <StackPanel DockPanel.Dock="Top" Spacing="8">
             <StackPanel Orientation="Horizontal" Spacing="8">

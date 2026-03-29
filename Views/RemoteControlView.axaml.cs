@@ -1,6 +1,7 @@
 ﻿using System;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using EchoLink.ViewModels;
 
 namespace EchoLink.Views;
@@ -12,6 +13,22 @@ public partial class RemoteControlView : UserControl
     public RemoteControlView()
     {
         InitializeComponent();
+
+        // 🚨 ADD THIS: The Avalonia Key Swallow
+        // This stops Enter, Space, and Tab from triggering PC buttons
+        // when PC keyboard routing is active
+        this.AddHandler(InputElement.KeyDownEvent, (sender, e) =>
+        {
+            var vm = DataContext as RemoteControlViewModel;
+            if (vm != null && vm.IsPcKeyboardRoutingEnabled)
+            {
+                // Tells Avalonia "I handled this, don't pass it to the UI"
+                e.Handled = true;
+                
+                // Move focus to this control to prevent space/enter from triggering buttons
+                this.Focus();
+            }
+        }, RoutingStrategies.Tunnel);
 
         var trackpad = this.FindControl<Border>("TrackpadArea");
         if (trackpad != null)

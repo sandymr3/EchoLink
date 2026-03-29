@@ -97,23 +97,29 @@ public class RemoteControlService
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.MouseMove,
             async (payload, reply, ct) => await MouseControlService.Instance.HandleMouseMoveAsync(payload, ct));
-        
+
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.MouseClick,
             async (payload, reply, ct) => await MouseControlService.Instance.HandleMouseClickAsync(payload, ct));
-        
+
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.SystemAction,
             async (payload, reply, ct) => await SystemControlService.Instance.HandleSystemActionAsync(payload, ct));
 
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.KeyPress,
-            (payload, reply, ct) => 
+            (payload, reply, ct) =>
             {
                 KeyboardControlService.Instance.ProcessIncomingKeyboardEvent(payload);
                 return Task.CompletedTask;
             });
-        
+
+        // PC→Android Keyboard Routing: Register handler for KeyboardEvent (0x0E)
+        // This routes PC keystrokes to Android's EchoLinkImeService
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.KeyboardEvent,
+            async (payload, reply, ct) => await KeyboardControlService.Instance.HandleKeyboardEventAsync(payload, ct));
+
         _log.Info("[RemoteControl] Unified protocol handlers registered");
     }
 }

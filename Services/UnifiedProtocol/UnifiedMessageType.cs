@@ -32,7 +32,10 @@ public enum UnifiedMessageType : byte
 
     // === Clipboard ACK (0x0D) ===
     ClipboardAck = 0x0D,
-    
+
+    // === Keyboard Event (0x0E) ===
+    KeyboardEvent = 0x0E,
+
     // === Keepalive (0xFF) ===
     PingPong = 0xFF
 }

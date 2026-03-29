@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Services;
@@ -135,6 +137,43 @@ public partial class MainWindowViewModel : ViewModelBase
         UnifiedProtocolService.Instance.StopServer();
         await TailscaleService.Instance.LogoutAsync();
         LoggedOut?.Invoke();
+    }
+
+    [RelayCommand]
+    private async System.Threading.Tasks.Task ExitAsync()
+    {
+        // Perform cleanup
+        await _clipboardSync.StopAsync();
+        await AudioStreamingService.Instance.StopAllAsync();
+        UnifiedProtocolService.Instance.StopServer();
+
+        if (TailscaleService.Instance.IsEphemeralSession)
+        {
+            await TailscaleService.Instance.LogoutAsync();
+        }
+        else
+        {
+            TailscaleService.Instance.StopDaemon();
+        }
+
+        // Shutdown the application
+        if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
+    }
+
+    [RelayCommand]
+    private void MinimizeToTray()
+    {
+        // Hide the main window
+        if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            if (desktop.MainWindow is Window window)
+            {
+                window.Hide();
+            }
+        }
     }
 
     private void Navigate(ViewModelBase vm, string title)
