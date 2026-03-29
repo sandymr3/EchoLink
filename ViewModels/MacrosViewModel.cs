@@ -2,18 +2,27 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
 using EchoLink.Services;
+using EchoLink.Services.UnifiedProtocol;
 
 namespace EchoLink.ViewModels;
 
 public partial class MacrosViewModel : ViewModelBase
 {
     private readonly LoggingService _log = LoggingService.Instance;
-    private readonly OsProbeService _probe = new();
+    private sealed record PendingMacroExecution(
+        bool RequiresUI,
+        TaskCompletionSource<MacroResultPayload> ResponseTcs);
+
+    private readonly Dictionary<Guid, PendingMacroExecution> _pendingExecutions = new();
+    private readonly object _pendingExecutionsLock = new();
 
     // ── Macro collection (ALL macros – no OS filter on the grid) ─────────
     public ObservableCollection<MacroButton> Macros { get; } = new();
@@ -45,6 +54,10 @@ public partial class MacrosViewModel : ViewModelBase
     [ObservableProperty] private string _errorDialogTitle = string.Empty;
     [ObservableProperty] private string _errorDialogMessage = string.Empty;
 
+    [ObservableProperty] private bool _isOutputDialogVisible;
+    [ObservableProperty] private string _outputDialogTitle = string.Empty;
+    [ObservableProperty] private string _outputDialogMessage = string.Empty;
+
     [ObservableProperty] private bool _isToastVisible;
     [ObservableProperty] private string _toastMessage = string.Empty;
     [ObservableProperty] private string _toastIcon = string.Empty;
@@ -53,6 +66,10 @@ public partial class MacrosViewModel : ViewModelBase
     {
         Macros.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoMacros));
         MacroService.Instance.MacrosChanged += OnExternalMacrosChanged;
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.MacroResult,
+            async (payload, reply, ct) => await HandleMacroResultAsync(payload, ct));
+
         LoadMacros();
         _ = LoadDevicesAsync();
         
@@ -181,6 +198,12 @@ public partial class MacrosViewModel : ViewModelBase
         IsErrorDialogVisible = false;
     }
 
+    [RelayCommand]
+    private void CloseOutputDialog()
+    {
+        IsOutputDialogVisible = false;
+    }
+
     private void ShowToastInternal(string message, string icon)
     {
         ToastMessage = message;
@@ -195,6 +218,59 @@ public partial class MacrosViewModel : ViewModelBase
     }
 
     // ── Execution ────────────────────────────────────────────────────────
+
+    private Task HandleMacroResultAsync(byte[] payload, CancellationToken ct)
+    {
+        try
+        {
+            var json = Encoding.UTF8.GetString(payload);
+            var result = JsonSerializer.Deserialize<MacroResultPayload>(json);
+            if (result is null)
+            {
+                _log.Warning("[Macros] Received null MacroResult payload.");
+                return Task.CompletedTask;
+            }
+
+            lock (_pendingExecutionsLock)
+            {
+                if (_pendingExecutions.TryGetValue(result.ExecutionId, out var pending))
+                {
+                    pending.ResponseTcs.TrySetResult(result);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Macros] Failed to parse MacroResult payload: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static string NormalizeOs(string? os)
+    {
+        if (string.IsNullOrWhiteSpace(os)) return string.Empty;
+        if (os.Contains("windows", StringComparison.OrdinalIgnoreCase)) return "Windows";
+        if (os.Contains("linux", StringComparison.OrdinalIgnoreCase)) return "Linux";
+        if (os.Contains("android", StringComparison.OrdinalIgnoreCase)) return "Android";
+        if (os.Contains("mac", StringComparison.OrdinalIgnoreCase) ||
+            os.Contains("darwin", StringComparison.OrdinalIgnoreCase)) return "macOS";
+
+        return os.Trim();
+    }
+
+    private static bool IsMacroTargetCompatible(string? macroTargetOs, string? deviceOs)
+    {
+        if (string.IsNullOrWhiteSpace(macroTargetOs) ||
+            macroTargetOs.Equals("All", StringComparison.OrdinalIgnoreCase) ||
+            macroTargetOs.Equals("Any", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return NormalizeOs(macroTargetOs)
+            .Equals(NormalizeOs(deviceOs), StringComparison.OrdinalIgnoreCase);
+    }
 
     [RelayCommand]
     private async Task ExecuteMacroAsync(MacroButton macro)
@@ -218,49 +294,116 @@ public partial class MacrosViewModel : ViewModelBase
             return;
         }
 
-        // ── Step 2 & 3: pre-flight + execute ─────────────────────────────
+        // ── Step 2: immediate in-memory OS compatibility check ───────────
+        if (!IsMacroTargetCompatible(macro.TargetOs, target.Os))
+        {
+            var macroOs = string.IsNullOrWhiteSpace(macro.TargetOs) ? "Any" : macro.TargetOs;
+            var deviceOs = string.IsNullOrWhiteSpace(target.Os) ? "Unknown" : target.Os;
+            StatusText = $"⚠ OS mismatch: macro targets {macroOs}, device is {deviceOs}";
+            ErrorDialogTitle = "OS Mismatch – Cannot Execute";
+            ErrorDialogMessage =
+                $"This macro targets '{macroOs}' but {target.Name} is running '{deviceOs}'.";
+            IsErrorDialogVisible = true;
+            return;
+        }
+
+        // ── Step 3: send MacroExecute and wait for MacroResult ───────────
         IsExecuting = true;
         FlashMacro(macro);
-        StatusText = $"⚡ Pre-flight check → {target.Name}…";
+        StatusText = $"Executing... {macro.Name} → {target.Name}";
 
         try
         {
-            if (target.IsSelf)
+            // Keep caller on Unified Protocol only (no SSH path)
+            bool connected = await UnifiedProtocolClient.Instance.ConnectAsync(
+                target.IpAddress,
+                UnifiedProtocolService.UnifiedPort,
+                NetworkService.TailscaleSocks5Port,
+                CancellationToken.None);
+
+            if (!connected)
             {
-                // Local: no SSH, no OS check
-                await RunLocallyAsync(macro.Command);
-                string msg = $"Command sent to {target.Name}";
-                StatusText = $"✔ {msg}";
-                ShowToastInternal(msg, "⚡");
-                _log.Info($"[Macros] Fired '{macro.Name}' locally.");
+                StatusText = $"❌ Could not connect to {target.Name} over Unified Protocol.";
+                ErrorDialogTitle = "Execution Failed";
+                ErrorDialogMessage =
+                    $"Unable to connect to {target.Name} via Unified Protocol.";
+                IsErrorDialogVisible = true;
                 return;
             }
 
-            // Remote: load credentials
-            var settings = SettingsService.Instance.Load();
-            if (!settings.PeerUsernames.TryGetValue(target.IpAddress, out var username))
-                username = Environment.UserName;
-
-            var pairSvc = new SshPairingService(TailscaleService.Instance);
-            await pairSvc.EnsureKeyPairAsync();
-
-            var result = await _probe.ProbeAndExecuteAsync(
-                target, macro.Command, macro.TargetOs, username, pairSvc.PrivateKeyPath);
-
-            if (result.Success)
+            var executionId = Guid.NewGuid();
+            var request = new MacroExecutePayload
             {
-                string msg = $"Command sent to {target.Name}";
+                ExecutionId = executionId,
+                CommandText = macro.Command,
+                TargetOs = NormalizeOs(macro.TargetOs),
+                RequiresUI = macro.RequiresUI
+            };
+
+            var requestJson = JsonSerializer.Serialize(request);
+            var requestPayload = Encoding.UTF8.GetBytes(requestJson);
+            var responseTcs = new TaskCompletionSource<MacroResultPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = new PendingMacroExecution(macro.RequiresUI, responseTcs);
+
+            lock (_pendingExecutionsLock)
+            {
+                _pendingExecutions[executionId] = pending;
+            }
+
+            await UnifiedProtocolClient.Instance.SendMessageAsync(
+                UnifiedMessageType.MacroExecute,
+                requestPayload,
+                CancellationToken.None);
+
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(15));
+            var completed = await Task.WhenAny(responseTcs.Task, timeoutTask);
+
+            lock (_pendingExecutionsLock)
+            {
+                _pendingExecutions.Remove(executionId);
+            }
+
+            if (completed != responseTcs.Task)
+            {
+                StatusText = "❌ Execution timed out after 15 seconds.";
+                ErrorDialogTitle = "Execution Timeout";
+                ErrorDialogMessage =
+                    "No MacroResult was received within 15 seconds. The target may be offline or not yet running the new macro engine.";
+                IsErrorDialogVisible = true;
+                return;
+            }
+
+            var result = await responseTcs.Task;
+
+            if (result.ExitCode != 0)
+            {
+                string err = string.IsNullOrWhiteSpace(result.OutputText)
+                    ? $"Execution failed with exit code {result.ExitCode}."
+                    : result.OutputText;
+                StatusText = $"⚠ {err}";
+                ErrorDialogTitle = "Execution Failed";
+                ErrorDialogMessage = err;
+                IsErrorDialogVisible = true;
+                return;
+            }
+
+            if (pending.RequiresUI)
+            {
+                const string msg = "App opened";
                 StatusText = $"✔ {msg}";
                 ShowToastInternal(msg, "⚡");
-                _log.Info($"[Macros] Fired '{macro.Name}' → {target.Name}");
+                _log.Info($"[Macros] UI macro '{macro.Name}' launched on {target.Name} (ExecutionId={executionId}).");
             }
             else
             {
-                string err = result.Error ?? "Unknown error";
-                StatusText = $"⚠ {err}";
-                ErrorDialogTitle = "OS Mismatch – Cannot Execute";
-                ErrorDialogMessage = err;
-                IsErrorDialogVisible = true;
+                string output = string.IsNullOrWhiteSpace(result.OutputText)
+                    ? "(No output)"
+                    : result.OutputText;
+                StatusText = $"✔ Command finished on {target.Name}";
+                OutputDialogTitle = "Command Output";
+                OutputDialogMessage = output;
+                IsOutputDialogVisible = true;
+                _log.Info($"[Macros] Background macro '{macro.Name}' completed on {target.Name} (ExecutionId={executionId}).");
             }
         }
         catch (Exception ex)
@@ -284,19 +427,6 @@ public partial class MacrosViewModel : ViewModelBase
         _ = Task.Delay(1500).ContinueWith(_ =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() => macro.IsFlashing = false));
     }
-
-    private static Task RunLocallyAsync(string command) =>
-        Task.Run(() =>
-        {
-            if (OperatingSystem.IsWindows())
-                System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c {command}")
-                    { UseShellExecute = true, CreateNoWindow = false });
-            else
-                System.Diagnostics.Process.Start(
-                    new System.Diagnostics.ProcessStartInfo("bash", $"-c \"{command}\"")
-                    { UseShellExecute = false });
-        });
 
     // ── Mesh sync ────────────────────────────────────────────────────────
 

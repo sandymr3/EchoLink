@@ -1,8 +1,11 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using EchoLink.Models;
+using EchoLink.Services.UnifiedProtocol;
 
 namespace EchoLink.Services;
 
@@ -24,6 +27,7 @@ public class MacroService
     private FileSystemWatcher? _inboxWatcher;
     private Timer? _debounceTimer;
     private readonly object _debounceLock = new();
+    private bool _unifiedInitialized;
 
     public event Action? MacrosChanged;
 
@@ -67,6 +71,18 @@ public class MacroService
         {
             _log.Error($"[Macros] Save failed: {ex.Message}");
         }
+    }
+
+    public void InitializeUnifiedProtocol()
+    {
+        if (_unifiedInitialized) return;
+
+        UnifiedProtocolService.Instance.RegisterHandler(
+            UnifiedMessageType.MacroExecute,
+            async (payload, reply, ct) => await HandleMacroExecuteAsync(payload, reply, ct));
+
+        _unifiedInitialized = true;
+        _log.Info("[Macros] Unified protocol handler registered");
     }
 
     /// <summary>
@@ -209,6 +225,255 @@ public class MacroService
         {
             _debounceTimer?.Dispose();
             _debounceTimer = new Timer(_ => callback(), null, 300, Timeout.Infinite);
+        }
+    }
+
+    private async Task HandleMacroExecuteAsync(
+        byte[] payload,
+        Func<UnifiedMessageType, byte[], Task> reply,
+        CancellationToken ct)
+    {
+        MacroExecutePayload? request;
+        try
+        {
+            var json = Encoding.UTF8.GetString(payload);
+            request = JsonSerializer.Deserialize<MacroExecutePayload>(json);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Macros] Invalid MacroExecute payload: {ex.Message}");
+            return;
+        }
+
+        if (request is null)
+        {
+            _log.Warning("[Macros] MacroExecute payload deserialized to null.");
+            return;
+        }
+
+        if (!IsTargetOsCompatible(request.TargetOs))
+        {
+            await SendMacroResultAsync(
+                reply,
+                new MacroResultPayload
+                {
+                    ExecutionId = request.ExecutionId,
+                    ExitCode = 2,
+                    OutputText =
+                        $"Target OS mismatch. Requested '{request.TargetOs}', current '{GetCurrentOsName()}'."
+                },
+                ct);
+            return;
+        }
+
+        MacroResultPayload result = request.RequiresUI
+            ? await ExecuteVisibleUiModeAsync(request)
+            : await ExecuteBackgroundModeAsync(request, ct);
+
+        await SendMacroResultAsync(reply, result, ct);
+    }
+
+    private async Task SendMacroResultAsync(
+        Func<UnifiedMessageType, byte[], Task> reply,
+        MacroResultPayload result,
+        CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(result);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        await reply(UnifiedMessageType.MacroResult, bytes);
+    }
+
+    private static string GetCurrentOsName()
+    {
+        if (OperatingSystem.IsWindows()) return "Windows";
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsAndroid()) return "Linux";
+        if (OperatingSystem.IsMacOS()) return "macOS";
+        return "Unknown";
+    }
+
+    private static string NormalizeOs(string? os)
+    {
+        if (string.IsNullOrWhiteSpace(os)) return string.Empty;
+
+        if (os.Contains("windows", StringComparison.OrdinalIgnoreCase)) return "Windows";
+        if (os.Contains("linux", StringComparison.OrdinalIgnoreCase) ||
+            os.Contains("android", StringComparison.OrdinalIgnoreCase)) return "Linux";
+        if (os.Contains("mac", StringComparison.OrdinalIgnoreCase) ||
+            os.Contains("darwin", StringComparison.OrdinalIgnoreCase)) return "macOS";
+
+        return os.Trim();
+    }
+
+    private static bool IsTargetOsCompatible(string? requestedOs)
+    {
+        if (string.IsNullOrWhiteSpace(requestedOs) ||
+            requestedOs.Equals("All", StringComparison.OrdinalIgnoreCase) ||
+            requestedOs.Equals("Any", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return NormalizeOs(requestedOs)
+            .Equals(NormalizeOs(GetCurrentOsName()), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<MacroResultPayload> ExecuteBackgroundModeAsync(
+        MacroExecutePayload request,
+        CancellationToken ct)
+    {
+        var psi = BuildBackgroundStartInfo(request.CommandText);
+        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        var output = new StringBuilder();
+
+        try
+        {
+            if (!process.Start())
+            {
+                return new MacroResultPayload
+                {
+                    ExecutionId = request.ExecutionId,
+                    ExitCode = 1,
+                    OutputText = "Failed to start process."
+                };
+            }
+
+            var stdoutTask = ConsumeReaderAsync(process.StandardOutput, output);
+            var stderrTask = ConsumeReaderAsync(process.StandardError, output);
+
+            var waitForExitTask = process.WaitForExitAsync(ct);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(10), ct);
+            var completedTask = await Task.WhenAny(waitForExitTask, timeoutTask);
+
+            if (completedTask != waitForExitTask)
+            {
+                try { process.Kill(true); } catch { }
+                await Task.WhenAll(stdoutTask, stderrTask);
+
+                return new MacroResultPayload
+                {
+                    ExecutionId = request.ExecutionId,
+                    ExitCode = 124,
+                    OutputText = string.IsNullOrWhiteSpace(output.ToString())
+                        ? "Process timeout after 10 seconds."
+                        : output.ToString()
+                };
+            }
+
+            await Task.WhenAll(stdoutTask, stderrTask);
+
+            return new MacroResultPayload
+            {
+                ExecutionId = request.ExecutionId,
+                ExitCode = process.ExitCode,
+                OutputText = output.ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            return new MacroResultPayload
+            {
+                ExecutionId = request.ExecutionId,
+                ExitCode = 1,
+                OutputText = ex.Message
+            };
+        }
+    }
+
+    private static async Task ConsumeReaderAsync(StreamReader reader, StringBuilder output)
+    {
+        while (true)
+        {
+            var line = await reader.ReadLineAsync();
+            if (line is null) break;
+            output.AppendLine(line);
+        }
+    }
+
+    private static ProcessStartInfo BuildBackgroundStartInfo(string command)
+    {
+        ProcessStartInfo psi;
+
+        if (OperatingSystem.IsWindows())
+        {
+            psi = new ProcessStartInfo("cmd.exe")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            psi.ArgumentList.Add("/c");
+            psi.ArgumentList.Add(command);
+            return psi;
+        }
+
+        psi = new ProcessStartInfo("/bin/bash")
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(command);
+        return psi;
+    }
+
+    private Task<MacroResultPayload> ExecuteVisibleUiModeAsync(MacroExecutePayload request)
+    {
+        try
+        {
+            ProcessStartInfo psi;
+            if (OperatingSystem.IsWindows())
+            {
+                psi = new ProcessStartInfo("cmd.exe")
+                {
+                    UseShellExecute = true,
+                    CreateNoWindow = false
+                };
+                psi.ArgumentList.Add("/c");
+                psi.ArgumentList.Add(request.CommandText);
+            }
+            else
+            {
+                string prefixed =
+                    "export DISPLAY=:0; export WAYLAND_DISPLAY=wayland-0; " +
+                    request.CommandText;
+                psi = new ProcessStartInfo("/bin/bash")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = false
+                };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(prefixed);
+            }
+
+            var process = Process.Start(psi);
+            if (process is null)
+            {
+                return Task.FromResult(new MacroResultPayload
+                {
+                    ExecutionId = request.ExecutionId,
+                    ExitCode = 1,
+                    OutputText = "Failed to launch UI process."
+                });
+            }
+
+            return Task.FromResult(new MacroResultPayload
+            {
+                ExecutionId = request.ExecutionId,
+                ExitCode = 0,
+                OutputText = "UI process launched."
+            });
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult(new MacroResultPayload
+            {
+                ExecutionId = request.ExecutionId,
+                ExitCode = 1,
+                OutputText = ex.Message
+            });
         }
     }
 }

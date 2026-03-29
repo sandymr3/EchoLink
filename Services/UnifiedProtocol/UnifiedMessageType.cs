@@ -25,7 +25,7 @@ public enum UnifiedMessageType : byte
     // === Clipboard Sync (0x09) ===
     ClipboardSync = 0x09,
     
-    // === Macros (0x0A) ===
+    // === Macros (0x0A, 0x10) ===
     MacroExecute = 0x0A,
     
     // === File Browser (0x0B-0x0C) ===
@@ -37,6 +37,9 @@ public enum UnifiedMessageType : byte
 
     // === Keyboard Event (0x0E) ===
     KeyboardEvent = 0x0E,
+
+    // === Macro Result (0x10) ===
+    MacroResult = 0x10,
 
     // === Keepalive (0xFF) ===
     PingPong = 0xFF

@@ -10,6 +10,10 @@ public partial class MacroButton : ObservableObject
     public string Command { get; set; } = string.Empty;
     /// <summary>null = runs on all platforms; "Windows" | "Linux" = OS filter.</summary>
     public string? TargetOs { get; set; }
+    /// <summary>
+    /// True = visible GUI app execution; False = background terminal/command execution.
+    /// </summary>
+    public bool RequiresUI { get; set; }
     public bool SyncToMesh { get; set; }
 
     /// <summary>Transient UI state – true for ~1.5 s after the macro fires, then resets.</summary>

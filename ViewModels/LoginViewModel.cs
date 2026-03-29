@@ -23,6 +23,47 @@ public partial class LoginViewModel : ViewModelBase
     /// </summary>
     public event Action? LoginSucceeded;
 
+    private async Task<bool> EnsureMeshReadyAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(75);
+        var nextBringUpAttempt = DateTime.UtcNow;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var fatal = TailscaleService.Instance.LastFatalStartupError;
+            if (!string.IsNullOrWhiteSpace(fatal))
+            {
+                StatusText = fatal;
+                _log.Error($"[Login] Fatal mesh startup error: {fatal}");
+                return false;
+            }
+
+            var state = await TailscaleService.Instance.GetBackendStateAsync(ct);
+            if (state == "Running")
+            {
+                return true;
+            }
+
+            StatusText = string.IsNullOrWhiteSpace(state) || state == "Unknown"
+                ? "Connected account. Waiting for mesh to stabilize..."
+                : $"Connected account. Mesh is starting ({state})...";
+
+            // Busy networks can need repeated bring-up nudges while state transitions.
+            if (DateTime.UtcNow >= nextBringUpAttempt &&
+                (state == "Starting" || state == "NeedsLogin" || state == "NoState" || state == "Unknown"))
+            {
+                _ = await TailscaleService.Instance.TryBringUpAsync(TimeSpan.FromSeconds(8));
+                nextBringUpAttempt = DateTime.UtcNow.AddSeconds(4);
+            }
+
+            await Task.Delay(1200, ct);
+        }
+
+        return false;
+    }
+
     [RelayCommand]
     private void ToggleGuestMode()
     {
@@ -58,13 +99,14 @@ public partial class LoginViewModel : ViewModelBase
             // Start Tailscale as Ephemeral node
             await TailscaleService.Instance.StartDaemonAsync(preAuthKey, true, ct);
 
-            var ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
-                TimeSpan.FromSeconds(20),
-                ct);
+            var ready = await EnsureMeshReadyAsync(ct);
             if (!ready)
             {
-                StatusText = "Connected account, but mesh is still starting. Please try again.";
-                _log.Warning("[Login] Guest daemon did not reach Running state within timeout.");
+                if (string.IsNullOrWhiteSpace(TailscaleService.Instance.LastFatalStartupError))
+                {
+                    StatusText = "Connected account, but mesh is still starting. Please wait a moment and retry.";
+                }
+                _log.Warning("[Login] Guest daemon did not reach Running state within extended startup window.");
                 return;
             }
 
@@ -131,13 +173,14 @@ public partial class LoginViewModel : ViewModelBase
             // Do not transition to main UI until backend is actually Running.
             // This avoids a false-success path where login moves forward while
             // tailscaled is still in NoState/Starting.
-            var ready = await TailscaleService.Instance.WaitForDaemonRunningAsync(
-                TimeSpan.FromSeconds(20),
-                ct);
+            var ready = await EnsureMeshReadyAsync(ct);
             if (!ready)
             {
-                StatusText = "Connected account, but mesh is still starting. Please try again.";
-                _log.Warning("[Login] Daemon did not reach Running state within timeout.");
+                if (string.IsNullOrWhiteSpace(TailscaleService.Instance.LastFatalStartupError))
+                {
+                    StatusText = "Connected account, but mesh is still starting. Please wait a moment and retry.";
+                }
+                _log.Warning("[Login] Daemon did not reach Running state within extended startup window.");
                 return;
             }
 

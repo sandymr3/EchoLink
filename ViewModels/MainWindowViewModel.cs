@@ -90,6 +90,7 @@ public partial class MainWindowViewModel : ViewModelBase
         AudioStreamingService.Instance.InitializeUnifiedProtocol();
         ClipboardSyncService.Instance.InitializeUnifiedProtocol();
         SystemMonitorService.Instance.InitializeUnifiedProtocol();
+        MacroService.Instance.InitializeUnifiedProtocol();
         UnifiedProtocolService.Instance.StartServer();
     }
 

@@ -124,6 +124,21 @@ public partial class App : Application
             using var stateCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             string state = await TailscaleService.Instance.GetBackendStateAsync(stateCts.Token);
 
+            if (!running && state == "Starting")
+            {
+                _log.Info("[Startup] Backend is still starting, waiting up to 30s for Running state...");
+                bool becameReady = await TailscaleService.Instance.WaitForDaemonRunningAsync(TimeSpan.FromSeconds(30));
+                if (becameReady)
+                {
+                    running = true;
+                    state = "Running";
+                }
+                else
+                {
+                    state = await TailscaleService.Instance.GetBackendStateAsync();
+                }
+            }
+
             // On Android, "TryBringUpAsync" just waits for the daemon state.
             // If it returns true OR the state is already Running, we are good to go.
             _log.Info($"[Startup] Running={running}, State={state}");

@@ -297,8 +297,21 @@
             </Border>
         </Grid>
 
-        <!-- 3. Toast Notification Overlay -->
-        <Border Background="#1A1A1A" BorderBrush="#252525" BorderThickness="1" CornerRadius="8" Padding="16,12" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32" IsVisible="{Binding IsToastVisible}" ZIndex="102">
+        <!-- 3. Output Dialog Overlay -->
+        <Grid Background="#B2000000" IsVisible="{Binding IsOutputDialogVisible}" ZIndex="102">
+            <Border Background="#0D0D0D" BorderBrush="#1E1E1E" BorderThickness="1" CornerRadius="12" Width="560" Height="320" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+                    <TextBlock Grid.Row="0" Text="{Binding OutputDialogTitle, StringFormat='📄 {0}'}" FontSize="16" FontWeight="Bold" Foreground="#E0E0E0"/>
+                    <ScrollViewer Grid.Row="1" Margin="0,14,0,14">
+                        <TextBlock Text="{Binding OutputDialogMessage}" FontSize="13" Foreground="#B3B3B3" TextWrapping="Wrap" FontFamily="Consolas, monospace"/>
+                    </ScrollViewer>
+                    <Button Grid.Row="2" Content="Close" Command="{Binding CloseOutputDialogCommand}" HorizontalAlignment="Right" Padding="20,8" Background="#1A2A1A" Foreground="#00E676" CornerRadius="6"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- 4. Toast Notification Overlay -->
+        <Border Background="#1A1A1A" BorderBrush="#252525" BorderThickness="1" CornerRadius="8" Padding="16,12" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32" IsVisible="{Binding IsToastVisible}" ZIndex="103">
             <StackPanel Orientation="Horizontal" Spacing="10">
                 <TextBlock Text="{Binding ToastIcon}" FontSize="16" VerticalAlignment="Center"/>
                 <TextBlock Text="{Binding ToastMessage}" FontSize="14" Foreground="#FFFFFF" VerticalAlignment="Center"/>
