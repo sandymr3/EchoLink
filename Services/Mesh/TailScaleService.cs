@@ -21,17 +21,12 @@ public class TailscaleService
     private bool _stopping;
     private string _tailscaleDir = "";
     private string _socketPath = "";
-    private string? _lastFatalStartupError;
-    private readonly HashSet<int> _expectedExitPids = new();
-    private readonly object _expectedExitLock = new();
     private readonly LoggingService _log = LoggingService.Instance;
 
     private const string HeadscaleServer = "https://control.echo-link.app";
     private const string HeadscaleHost = "control.echo-link.app";
 
     public INativeMeshBridge? NativeBridge { get; set; }
-
-    public string? LastFatalStartupError => _lastFatalStartupError;
 
     /// <summary>
     /// Waits for the daemon to reach Running state by polling the CLI.
@@ -67,10 +62,6 @@ public class TailscaleService
                 try 
                 {
                     _log.Info($"[Tailscale] Attempting to kill orphaned daemon process (PID {p.Id})");
-                    lock (_expectedExitLock)
-                    {
-                        _expectedExitPids.Add(p.Id);
-                    }
                     p.Kill(); 
                 } 
                 catch 
@@ -90,7 +81,6 @@ public class TailscaleService
     public async Task StartDaemonAsync(string authKey, bool isEphemeral, CancellationToken ct = default)
     {
         IsEphemeralSession = isEphemeral;
-        _lastFatalStartupError = null;
 
         if (OperatingSystem.IsAndroid())
         {
@@ -143,9 +133,7 @@ public class TailscaleService
 
         // 3. Build the socket path.
         _socketPath = OperatingSystem.IsWindows()
-            // On Windows, use default LocalAPI socket behavior. Custom --socket values
-            // can fail with named-pipe ownership/format errors in some environments.
-            ? string.Empty
+            ? @"\\.\pipe\EchoLinkTailscaled"
             : Path.Combine(_tailscaleDir, "tailscaled.sock");
 
         _log.Info($"[Tailscale] Socket/pipe path: {_socketPath}");
@@ -161,10 +149,7 @@ public class TailscaleService
         // 5. DNS pre-check
         RunDnsPreCheck();
 
-        string socketArg = string.IsNullOrEmpty(_socketPath)
-            ? string.Empty
-            : $" --socket=\"{_socketPath}\"";
-        string arguments = $"--state=\"{stateFile}\"{socketArg} --tun=userspace-networking --socks5-server=localhost:1055";
+        string arguments = $"--state=\"{stateFile}\" --socket=\"{_socketPath}\" --tun=userspace-networking --socks5-server=localhost:1055";
 
         _log.Info($"[Tailscale] Starting daemon: {binaryPath} {arguments}");
 
@@ -180,57 +165,33 @@ public class TailscaleService
 
         try
         {
-            var daemonProcess = Process.Start(startInfo)!;
-            _daemonProcess = daemonProcess;
-            int daemonPid = daemonProcess.Id;
-            _log.Info($"[Tailscale] Daemon started (PID {daemonPid})");
+            _daemonProcess = Process.Start(startInfo)!;
+            _log.Info($"[Tailscale] Daemon started (PID {_daemonProcess.Id})");
 
-            daemonProcess.OutputDataReceived += (_, e) =>
+            _daemonProcess.OutputDataReceived += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
                     _log.Debug($"[tailscaled stdout] {e.Data}");
             };
-            daemonProcess.ErrorDataReceived += (_, e) =>
+            _daemonProcess.ErrorDataReceived += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
                 {
                     _log.Warning($"[tailscaled stderr] {e.Data}");
-
-                    if (e.Data.Contains("safesocket.Listen", StringComparison.OrdinalIgnoreCase) &&
-                        (e.Data.Contains("This security ID may not be assigned as the owner", StringComparison.OrdinalIgnoreCase) ||
-                         e.Data.Contains("Access is denied", StringComparison.OrdinalIgnoreCase) ||
-                         e.Data.Contains("Incorrect function", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _lastFatalStartupError =
-                            "Windows denied access to tailscaled LocalAPI socket. Run EchoLink as Administrator, " +
-                            "or install/run the Tailscale Windows service and retry.";
-                    }
                 }
             };
-            daemonProcess.BeginOutputReadLine();
-            daemonProcess.BeginErrorReadLine();
+            _daemonProcess.BeginOutputReadLine();
+            _daemonProcess.BeginErrorReadLine();
 
-            daemonProcess.EnableRaisingEvents = true;
-            daemonProcess.Exited += (_, _) =>
+            _daemonProcess.EnableRaisingEvents = true;
+            _daemonProcess.Exited += (_, _) =>
             {
-                bool expectedExit;
-                lock (_expectedExitLock)
+                if (!_stopping)
                 {
-                    expectedExit = _expectedExitPids.Remove(daemonPid);
+                    int code = -1;
+                    try { code = _daemonProcess.ExitCode; } catch { }
+                    _log.Error($"[Tailscale] !!! Daemon exited unexpectedly (exit code {code}) !!!");
                 }
-
-                if (_stopping || expectedExit)
-                {
-                    _log.Info($"[Tailscale] Daemon exited as expected (PID {daemonPid}).");
-                    return;
-                }
-
-                int code = -1;
-                try { code = daemonProcess.ExitCode; } catch { }
-                _log.Error($"[Tailscale] !!! Daemon exited unexpectedly (exit code {code}) !!!");
-
-                _lastFatalStartupError ??=
-                    $"Embedded tailscaled exited unexpectedly (exit code {code}).";
             };
 
             // Only pass --authkey and --force-reauth if a non-empty authKey is provided
@@ -256,31 +217,25 @@ public class TailscaleService
             var upProcess = Process.Start(upPsi);
             if (upProcess != null)
             {
-                using var upWaitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                // Prevent startup deadlock when tailscale up waits for interactive auth flow.
-                upWaitCts.CancelAfter(TimeSpan.FromSeconds(12));
+                using var upTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                upTimeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
                 try
                 {
-                    await upProcess.WaitForExitAsync(upWaitCts.Token);
+                    await upProcess.WaitForExitAsync(upTimeoutCts.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    _log.Warning("[Tailscale] 'tailscale up' is taking too long; continuing startup and checking backend state asynchronously.");
-                    try
-                    {
-                        if (!upProcess.HasExited)
-                            upProcess.Kill(entireProcessTree: true);
-                    }
-                    catch { }
+                    _log.Warning("[Tailscale] 'tailscale up' did not exit within 15s; continuing startup in degraded mode.");
+                    try { if (!upProcess.HasExited) upProcess.Kill(entireProcessTree: true); } catch { }
                 }
             }
 
             _ = Task.Run(async () =>
             {
                 await Task.Delay(3000);
-                if (daemonProcess.HasExited)
+                if (_daemonProcess.HasExited)
                 {
-                    _log.Error($"[Tailscale] Daemon died within 3 s of launch (exit code {daemonProcess.ExitCode}).");
+                    _log.Error($"[Tailscale] Daemon died within 3 s of launch (exit code {_daemonProcess.ExitCode}).");
                     return;
                 }
                 _log.Info($"[Tailscale] Daemon still alive after 3 s.");
@@ -372,10 +327,6 @@ public class TailscaleService
             _log.Info("[Tailscale] Stopping daemon...");
             try
             {
-                lock (_expectedExitLock)
-                {
-                    _expectedExitPids.Add(_daemonProcess.Id);
-                }
                 _daemonProcess.Kill(entireProcessTree: true);
                 _daemonProcess.Dispose();
             }
@@ -396,10 +347,7 @@ public class TailscaleService
     private string PrefixSocketArg(string arguments)
     {
         if (!string.IsNullOrEmpty(_socketPath))
-        {
             return $"--socket=\"{_socketPath}\" {arguments}";
-        }
-
         return arguments;
     }
 
