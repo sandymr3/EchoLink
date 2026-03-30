@@ -172,51 +172,77 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Fixed Trackpad area (outside ScrollViewer) -->
+        <!-- Collapsible Trackpad area (outside ScrollViewer) -->
         <Border Grid.Row="1" 
                 Background="#0D0D0D"
-                Padding="32,16,32,100"
                 BorderBrush="#333333"
                 BorderThickness="0,1,0,0">
-            <StackPanel Spacing="8">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Input &amp; Trackpad"
-                               FontSize="13" FontWeight="SemiBold"
-                               Foreground="#B3B3B3"
-                               VerticalAlignment="Center"/>
-                    <TextBlock Text="{Binding TrackpadStatus}"
-                               FontSize="12" Foreground="#00E5FF"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
-
-                <TextBox x:Name="KeyboardTrap"
-                         Text=" "
-                         AcceptsReturn="True"
-                         TextWrapping="NoWrap"
-                         Watermark="Type here to send keystrokes..."
-                         Background="#1A1A1A"
-                         BorderBrush="#333333"
-                         Foreground="#FFFFFF"
-                         Margin="0,0,0,8" />
-
-                <Border Name="TrackpadArea"
+            <StackPanel>
+                <!-- Expand/Collapse Toggle Bar -->
+                <Button Command="{Binding ToggleTrackpadCommand}"
                         Background="#1A1A1A"
-                        CornerRadius="12"
-                        MinHeight="200"
-                        Focusable="True"
-                        ClipToBounds="True">
-                    <Border.Styles>
-                        <Style Selector="Border:focus">
-                            <Setter Property="BorderBrush" Value="#3273F6"/>
-                            <Setter Property="BorderThickness" Value="2"/>
-                        </Style>
-                    </Border.Styles>
-                    <TextBlock Text="Touch and drag to move pointer"
-                               FontSize="14" Foreground="#3A3A3A"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               IsHitTestVisible="False"/>
-                </Border>
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        Padding="12,10"
+                        CornerRadius="0">
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                        <TextBlock Text="{Binding TrackpadExpandIcon}"
+                                   FontSize="14" Foreground="#00E5FF"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="🖱️" FontSize="14" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding TrackpadExpandText}"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#FFFFFF"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding TrackpadExpandIcon}"
+                                   FontSize="14" Foreground="#00E5FF"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Trackpad Content (visible when expanded) -->
+                <StackPanel IsVisible="{Binding IsTrackpadExpanded}"
+                            Spacing="8"
+                            Margin="32,12,32,24">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Input &amp; Trackpad"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#B3B3B3"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding TrackpadStatus}"
+                                   FontSize="12" Foreground="#00E5FF"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <TextBox x:Name="KeyboardTrap"
+                             Text=" "
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             Watermark="Type here to send keystrokes..."
+                             Background="#1A1A1A"
+                             BorderBrush="#333333"
+                             Foreground="#FFFFFF"
+                             Margin="0,0,0,8" />
+
+                    <Border Name="TrackpadArea"
+                            Background="#1A1A1A"
+                            CornerRadius="12"
+                            MinHeight="180"
+                            Focusable="True"
+                            ClipToBounds="True">
+                        <Border.Styles>
+                            <Style Selector="Border:focus">
+                                <Setter Property="BorderBrush" Value="#3273F6"/>
+                                <Setter Property="BorderThickness" Value="2"/>
+                            </Style>
+                        </Border.Styles>
+                        <TextBlock Text="Touch and drag to move pointer"
+                                   FontSize="14" Foreground="#3A3A3A"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False"/>
+                    </Border>
+                </StackPanel>
             </StackPanel>
         </Border>
     </Grid>

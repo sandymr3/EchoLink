@@ -25,6 +25,10 @@ public partial class RemoteControlViewModel : ViewModelBase
     [ObservableProperty] private string _trackpadStatus = "Trackpad ready";
     [ObservableProperty] private string _audioStatus = "Audio idle";
     [ObservableProperty] private bool _isAudioStreaming;
+    [ObservableProperty] private bool _isTrackpadExpanded;
+
+    public string TrackpadExpandIcon => IsTrackpadExpanded ? "▼" : "▲";
+    public string TrackpadExpandText => IsTrackpadExpanded ? "Hide Trackpad" : "Show Trackpad";
 
     // PC Keyboard routing state
     [ObservableProperty] private bool _isPcKeyboardRoutingEnabled;
@@ -89,6 +93,18 @@ public partial class RemoteControlViewModel : ViewModelBase
     partial void OnSelectedTargetChanged(Device? value)
     {
         _ = ConnectToTargetAsync(value);
+    }
+
+    partial void OnIsTrackpadExpandedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(TrackpadExpandIcon));
+        OnPropertyChanged(nameof(TrackpadExpandText));
+    }
+
+    [RelayCommand]
+    private void ToggleTrackpad()
+    {
+        IsTrackpadExpanded = !IsTrackpadExpanded;
     }
 
     private async Task ConnectToTargetAsync(Device? target)
