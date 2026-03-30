@@ -30,54 +30,66 @@
 
             <!-- Status Card -->
             <Border Classes="Card">
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
-
-                    <!-- Status label row -->
-                    <StackPanel Grid.Row="0" Grid.Column="0"
-                                Orientation="Horizontal" Spacing="12"
-                                VerticalAlignment="Center">
+                <StackPanel Spacing="16">
+                    <!-- Status Row -->
+                    <StackPanel Orientation="Horizontal" Spacing="12">
                         <Ellipse Width="16" Height="16"
                                  Fill="{Binding IsMeshOnline, Converter={StaticResource MeshStatusColor}}"/>
-                        <TextBlock Text="{Binding StatusText}"
-                                   FontSize="18" FontWeight="SemiBold"
-                                   Foreground="#FFFFFF"
-                                   VerticalAlignment="Center"/>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding StatusText}"
+                                       FontSize="18" FontWeight="SemiBold"
+                                       Foreground="#FFFFFF"/>
+                            <TextBlock Text="{Binding NetworkName}"
+                                       FontSize="12" Foreground="#B3B3B3"/>
+                        </StackPanel>
                     </StackPanel>
 
-                    <!-- Network name -->
-                    <TextBlock Grid.Row="1" Grid.Column="0"
-                               Text="{Binding NetworkName}"
-                               FontSize="12" Foreground="#B3B3B3"
-                               Margin="28,4,0,0"/>
-
-                    <!-- Action buttons -->
-                    <StackPanel Grid.Row="0" Grid.Column="1" Grid.RowSpan="2" Orientation="Horizontal" Spacing="8">
+                    <!-- Action buttons - WrapPanel for responsive layout -->
+                    <WrapPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <WrapPanel.Styles>
+                            <Style Selector="Button">
+                                <Setter Property="Margin" Value="0,0,8,8"/>
+                                <Setter Property="MinWidth" Value="100"/>
+                            </Style>
+                        </WrapPanel.Styles>
                         <Button Classes="Secondary"
                                 Command="{Binding ShowJoinPopupCommand}"
-                                Content="Join Device"
-                                VerticalAlignment="Center"
-                                ToolTip.Tip="Connect to another device via PIN"/>
+                                ToolTip.Tip="Connect to another device via PIN">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="🔗" FontSize="14"/>
+                                <TextBlock Text="Join" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                         <Button Classes="Secondary"
                                 Command="{Binding GeneratePairingInviteCommand}"
-                                Content="Pair Device"
-                                VerticalAlignment="Center"
-                                ToolTip.Tip="Generate a PIN for another user to connect to you"/>
+                                ToolTip.Tip="Generate a PIN for another user to connect to you">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="🔐" FontSize="14"/>
+                                <TextBlock Text="Pair" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                         <Button Classes="Secondary"
                                 Command="{Binding GenerateGuestInviteCommand}"
-                                Content="Invite Guest"
-                                VerticalAlignment="Center"/>
+                                ToolTip.Tip="Invite a guest to connect temporarily">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="👤" FontSize="14"/>
+                                <TextBlock Text="Guest" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                         <Button Classes="Primary"
                                 Command="{Binding RefreshNetworkCommand}"
-                                Content="Refresh"
-                                VerticalAlignment="Center"/>
-                    </StackPanel>
+                                ToolTip.Tip="Refresh network status">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="🔄" FontSize="14"/>
+                                <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </WrapPanel>
 
                     <!-- IP Display -->
-                    <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
-                            Background="#121212"
+                    <Border Background="#121212"
                             CornerRadius="6"
-                            Padding="14,10"
-                            Margin="0,16,0,0">
+                            Padding="14,10">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="Tailscale / Headscale IP"
@@ -99,7 +111,7 @@
                                     Content="📋"/>
                         </Grid>
                     </Border>
-                </Grid>
+                </StackPanel>
             </Border>
 
             <!-- Invite Card (PIN Generator) -->
