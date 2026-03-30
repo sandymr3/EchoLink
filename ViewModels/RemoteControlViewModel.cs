@@ -289,8 +289,8 @@ public partial class RemoteControlViewModel : ViewModelBase
         _lastX = x;
         _lastY = y;
 
-        PointerX = x;
-        PointerY = y;
+        // 🔒 Don't update PointerX/PointerY during drag - this prevents trackpad UI shaking
+        // We only need delta positions, not absolute positions for the remote control
 
         TrackpadStatus = $"Δ({deltaX:+0.0;-0.0}, {deltaY:+0.0;-0.0})";
 
