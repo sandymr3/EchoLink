@@ -76,22 +76,36 @@ public partial class RemoteControlView : UserControl
 
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        var pos = e.GetPosition(sender as Control);
+        var border = sender as Border;
+        if (border == null) return;
+
+        var pos = e.GetPosition(border);
         ViewModel?.OnPointerPressed(pos.X, pos.Y);
-        (sender as Border)?.Focus();
+        
+        // Capture pointer to lock touch input to the trackpad
+        e.Pointer.Capture(border);
+        e.Handled = true;
+        border.Focus();
     }
 
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
-        var props = e.GetCurrentPoint(sender as Control).Properties;
+        var border = sender as Border;
+        if (border == null) return;
+
+        var props = e.GetCurrentPoint(border).Properties;
         if (!props.IsLeftButtonPressed) return;
 
-        var pos = e.GetPosition(sender as Control);
+        var pos = e.GetPosition(border);
         ViewModel?.OnPointerMoved(pos.X, pos.Y);
+        e.Handled = true;
     }
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        // Release pointer capture for smooth transition back to normal UI
+        e.Pointer.Capture(null);
+        e.Handled = true;
         ViewModel?.OnPointerReleased();
     }
 }
