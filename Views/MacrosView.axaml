@@ -113,6 +113,10 @@
                                 <ComboBox ItemsSource="{Binding OsOptions}"
                                           SelectedItem="{Binding EditTargetOs}"
                                           MinWidth="120"/>
+                                <CheckBox Content="Requires UI"
+                                          IsChecked="{Binding EditRequiresUi}"
+                                          VerticalAlignment="Center"
+                                          Foreground="#B3B3B3"/>
                                 <TextBlock Text="(shown on all devices — sent only to matching OS)"
                                            FontSize="11" Foreground="#505050"
                                            VerticalAlignment="Center"/>
@@ -145,42 +149,35 @@
                                     Classes="MacroTile">
                                 <StackPanel Spacing="10">
 
-                                    <!-- Top row: icon + delete -->
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{Binding Icon}"
-                                                   FontSize="32" VerticalAlignment="Center"/>
-                                        <Button Grid.Column="1"
-                                                Content="✕"
-                                                Command="{Binding $parent[UserControl].((vm:MacrosViewModel)DataContext).DeleteMacroCommand}"
-                                                CommandParameter="{Binding}"
-                                                Background="Transparent"
-                                                Foreground="#404040"
-                                                Padding="4" FontSize="12"
-                                                VerticalAlignment="Top"/>
-                                    </Grid>
+                                    <Button Background="Transparent"
+                                            Padding="0"
+                                            HorizontalContentAlignment="Stretch"
+                                            Command="{Binding $parent[UserControl].((vm:MacrosViewModel)DataContext).OpenMacroDetailsCommand}"
+                                            CommandParameter="{Binding}">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="{Binding Icon}"
+                                                       FontSize="32" VerticalAlignment="Center"/>
 
-                                    <!-- Name -->
-                                    <TextBlock Text="{Binding Name}"
-                                               FontSize="13" FontWeight="SemiBold"
-                                               Foreground="#EFEFEF"
-                                               TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="#EFEFEF"
+                                                       TextTrimming="CharacterEllipsis"/>
 
-                                    <!-- OS badge -->
-                                    <Border CornerRadius="4" Padding="6,2"
-                                            HorizontalAlignment="Left">
-                                        <Border.Background>
-                                            <SolidColorBrush Color="#252525"/>
-                                        </Border.Background>
-                                        <!-- Show "Any OS" when TargetOs is null -->
-                                        <TextBlock FontSize="10" Foreground="#707070">
-                                            <TextBlock.Text>
-                                                <Binding Path="TargetOs"
-                                                         FallbackValue="Any OS"
-                                                         TargetNullValue="Any OS"/>
-                                            </TextBlock.Text>
-                                        </TextBlock>
-                                    </Border>
+                                            <Border CornerRadius="4" Padding="6,2"
+                                                    HorizontalAlignment="Left">
+                                                <Border.Background>
+                                                    <SolidColorBrush Color="#252525"/>
+                                                </Border.Background>
+                                                <TextBlock FontSize="10" Foreground="#707070">
+                                                    <TextBlock.Text>
+                                                        <Binding Path="TargetOs"
+                                                                 FallbackValue="Any OS"
+                                                                 TargetNullValue="Any OS"/>
+                                                    </TextBlock.Text>
+                                                </TextBlock>
+                                            </Border>
+                                        </StackPanel>
+                                    </Button>
 
                                     <!-- Execute button -->
                                     <Button Content="▶ Run"
@@ -317,6 +314,56 @@
                 <TextBlock Text="{Binding ToastMessage}" FontSize="14" Foreground="#FFFFFF" VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
+
+        <!-- 5. Macro Details Overlay -->
+        <Grid Background="#B2000000" IsVisible="{Binding IsMacroDetailsVisible}" ZIndex="104">
+            <Border Background="#0D0D0D" BorderBrush="#1E1E1E" BorderThickness="1" CornerRadius="12" Width="520" Height="360" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+                    <TextBlock Grid.Row="0" FontSize="16" FontWeight="Bold" Foreground="#FFFFFF">
+                        <Run Text="{Binding SelectedMacroDetails.Icon}"/>
+                        <Run Text="  "/>
+                        <Run Text="{Binding SelectedMacroDetails.Name}"/>
+                    </TextBlock>
+                    <StackPanel Grid.Row="1" Spacing="10" Margin="0,14,0,12">
+                        <TextBlock Text="Command" FontSize="12" Foreground="#707070"/>
+                        <Border Background="#141414" BorderBrush="#252525" BorderThickness="1" CornerRadius="8" Padding="10">
+                            <TextBlock Text="{Binding SelectedMacroDetails.Command}" TextWrapping="Wrap" FontFamily="Consolas, monospace" Foreground="#D0D0D0"/>
+                        </Border>
+
+                        <StackPanel Orientation="Horizontal" Spacing="14">
+                            <TextBlock FontSize="12" Foreground="#B3B3B3">
+                                <Run Text="Target OS: "/>
+                                <Run Text="{Binding SelectedMacroDetails.TargetOs, FallbackValue=Any OS, TargetNullValue=Any OS}"/>
+                            </TextBlock>
+                            <TextBlock FontSize="12" Foreground="#B3B3B3">
+                                <Run Text="Requires UI: "/>
+                                <Run Text="{Binding SelectedMacroDetails.RequiresUI}"/>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                        <Button Content="Close" Command="{Binding CloseMacroDetailsCommand}" Background="#2D2D2D" Foreground="#B3B3B3" CornerRadius="6" Padding="14,8"/>
+                        <Button Content="Edit" Command="{Binding EditSelectedMacroCommand}" Background="#1A2A1A" Foreground="#00E676" CornerRadius="6" Padding="14,8"/>
+                        <Button Content="Delete" Command="{Binding RequestDeleteSelectedMacroCommand}" Background="#3A1A1A" Foreground="#FF8A80" CornerRadius="6" Padding="14,8"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- 6. Delete Confirmation Overlay -->
+        <Grid Background="#B2000000" IsVisible="{Binding IsDeleteConfirmVisible}" ZIndex="105">
+            <Border Background="#0D0D0D" BorderBrush="#1E1E1E" BorderThickness="1" CornerRadius="12" Width="460" Height="220" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Margin="24" Spacing="14">
+                    <TextBlock Text="Delete Macro" FontSize="16" FontWeight="Bold" Foreground="#FF8A80"/>
+                    <TextBlock Text="{Binding DeleteConfirmMessage}" FontSize="13" Foreground="#B3B3B3" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,18,0,0">
+                        <Button Content="Cancel" Command="{Binding CancelDeleteMacroCommand}" Background="#2D2D2D" Foreground="#B3B3B3" CornerRadius="6" Padding="14,8"/>
+                        <Button Content="Yes, Delete" Command="{Binding ConfirmDeleteMacroCommand}" Background="#3A1A1A" Foreground="#FF8A80" CornerRadius="6" Padding="14,8"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 
     <UserControl.Styles>

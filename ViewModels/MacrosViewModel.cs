@@ -17,12 +17,8 @@ namespace EchoLink.ViewModels;
 public partial class MacrosViewModel : ViewModelBase
 {
     private readonly LoggingService _log = LoggingService.Instance;
-    private sealed record PendingMacroExecution(
-        bool RequiresUI,
-        TaskCompletionSource<MacroResultPayload> ResponseTcs);
-
-    private readonly Dictionary<Guid, PendingMacroExecution> _pendingExecutions = new();
-    private readonly object _pendingExecutionsLock = new();
+    private string? _editingMacroId;
+    private MacroButton? _pendingDeleteMacro;
 
     // ── Macro collection (ALL macros – no OS filter on the grid) ─────────
     public ObservableCollection<MacroButton> Macros { get; } = new();
@@ -34,6 +30,7 @@ public partial class MacrosViewModel : ViewModelBase
     [ObservableProperty] private string _editIcon      = "⚡";
     [ObservableProperty] private string _editCommand   = string.Empty;
     [ObservableProperty] private string _editTargetOs  = "All";
+    [ObservableProperty] private bool   _editRequiresUi;
     [ObservableProperty] private bool   _editSyncToMesh;
 
     // ── Execution state ──────────────────────────────────────────────────
@@ -62,13 +59,16 @@ public partial class MacrosViewModel : ViewModelBase
     [ObservableProperty] private string _toastMessage = string.Empty;
     [ObservableProperty] private string _toastIcon = string.Empty;
 
+    [ObservableProperty] private bool _isMacroDetailsVisible;
+    [ObservableProperty] private MacroButton? _selectedMacroDetails;
+
+    [ObservableProperty] private bool _isDeleteConfirmVisible;
+    [ObservableProperty] private string _deleteConfirmMessage = string.Empty;
+
     public MacrosViewModel()
     {
         Macros.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoMacros));
         MacroService.Instance.MacrosChanged += OnExternalMacrosChanged;
-        UnifiedProtocolService.Instance.RegisterHandler(
-            UnifiedMessageType.MacroResult,
-            async (payload, reply, ct) => await HandleMacroResultAsync(payload, ct));
 
         LoadMacros();
         _ = LoadDevicesAsync();
@@ -125,10 +125,12 @@ public partial class MacrosViewModel : ViewModelBase
     [RelayCommand]
     private void AddMacro()
     {
+        _editingMacroId = null;
         EditName      = "New Macro";
         EditIcon      = "⚡";
         EditCommand   = string.Empty;
         EditTargetOs  = "All";
+        EditRequiresUi = false;
         EditSyncToMesh = false;
         IsEditing     = true;
     }
@@ -142,20 +144,46 @@ public partial class MacrosViewModel : ViewModelBase
             return;
         }
 
-        var macro = new MacroButton
+        MacroButton macro;
+        bool updated = false;
+        if (!string.IsNullOrWhiteSpace(_editingMacroId))
         {
-            Name       = EditName.Trim(),
-            Icon       = EditIcon.Trim(),
-            Command    = EditCommand.Trim(),
-            TargetOs   = EditTargetOs == "All" ? null : EditTargetOs,
-            SyncToMesh = EditSyncToMesh
-        };
+            var existing = Macros.FirstOrDefault(m =>
+                m.Id.Equals(_editingMacroId, StringComparison.Ordinal));
+            if (existing != null)
+            {
+                macro = existing;
+                updated = true;
+            }
+            else
+            {
+                macro = new MacroButton();
+            }
+        }
+        else
+        {
+            macro = new MacroButton();
+        }
 
-        Macros.Add(macro);
+        macro.Name       = EditName.Trim();
+        macro.Icon       = EditIcon.Trim();
+        macro.Command    = EditCommand.Trim();
+        macro.TargetOs   = EditTargetOs == "All" ? null : EditTargetOs;
+        macro.RequiresUI = EditRequiresUi;
+        macro.SyncToMesh = EditSyncToMesh;
+
+        if (!updated)
+        {
+            Macros.Add(macro);
+        }
+
         MacroService.Instance.Save([.. Macros]);
+        _editingMacroId = null;
         IsEditing  = false;
-        StatusText = $"✔ '{macro.Name}' saved.";
-        _log.Info($"[Macros] Added macro '{macro.Name}'");
+        StatusText = updated ? $"✔ '{macro.Name}' updated." : $"✔ '{macro.Name}' saved.";
+        _log.Info(updated
+            ? $"[Macros] Updated macro '{macro.Name}'"
+            : $"[Macros] Added macro '{macro.Name}'");
 
         // Always broadcast to mesh (Global Macro Command Center: all peers share the same list)
         _ = SyncToMeshAsync();
@@ -165,8 +193,78 @@ public partial class MacrosViewModel : ViewModelBase
     private void CancelEdit() => IsEditing = false;
 
     [RelayCommand]
-    private void DeleteMacro(MacroButton macro)
+    private void OpenMacroDetails(MacroButton macro)
     {
+        SelectedMacroDetails = macro;
+        IsMacroDetailsVisible = true;
+    }
+
+    [RelayCommand]
+    private void CloseMacroDetails()
+    {
+        IsMacroDetailsVisible = false;
+        SelectedMacroDetails = null;
+    }
+
+    [RelayCommand]
+    private void EditSelectedMacro()
+    {
+        if (SelectedMacroDetails is null)
+        {
+            return;
+        }
+
+        _editingMacroId = SelectedMacroDetails.Id;
+        EditName = SelectedMacroDetails.Name;
+        EditIcon = SelectedMacroDetails.Icon;
+        EditCommand = SelectedMacroDetails.Command;
+        EditTargetOs = string.IsNullOrWhiteSpace(SelectedMacroDetails.TargetOs)
+            ? "All"
+            : SelectedMacroDetails.TargetOs;
+        EditRequiresUi = SelectedMacroDetails.RequiresUI;
+        EditSyncToMesh = SelectedMacroDetails.SyncToMesh;
+
+        IsMacroDetailsVisible = false;
+        IsEditing = true;
+    }
+
+    [RelayCommand]
+    private void RequestDeleteSelectedMacro()
+    {
+        if (SelectedMacroDetails is null)
+        {
+            return;
+        }
+
+        _pendingDeleteMacro = SelectedMacroDetails;
+        DeleteConfirmMessage =
+            $"Are you sure you want to delete '{SelectedMacroDetails.Name}'?";
+        IsMacroDetailsVisible = false;
+        IsDeleteConfirmVisible = true;
+    }
+
+    [RelayCommand]
+    private void CancelDeleteMacro()
+    {
+        _pendingDeleteMacro = null;
+        IsDeleteConfirmVisible = false;
+        DeleteConfirmMessage = string.Empty;
+    }
+
+    [RelayCommand]
+    private void ConfirmDeleteMacro()
+    {
+        if (_pendingDeleteMacro is null)
+        {
+            IsDeleteConfirmVisible = false;
+            return;
+        }
+
+        var macro = _pendingDeleteMacro;
+        _pendingDeleteMacro = null;
+        IsDeleteConfirmVisible = false;
+        DeleteConfirmMessage = string.Empty;
+
         Macros.Remove(macro);
         MacroService.Instance.Save([.. Macros]);
         StatusText = $"Deleted '{macro.Name}'";
@@ -218,34 +316,6 @@ public partial class MacrosViewModel : ViewModelBase
     }
 
     // ── Execution ────────────────────────────────────────────────────────
-
-    private Task HandleMacroResultAsync(byte[] payload, CancellationToken ct)
-    {
-        try
-        {
-            var json = Encoding.UTF8.GetString(payload);
-            var result = JsonSerializer.Deserialize<MacroResultPayload>(json);
-            if (result is null)
-            {
-                _log.Warning("[Macros] Received null MacroResult payload.");
-                return Task.CompletedTask;
-            }
-
-            lock (_pendingExecutionsLock)
-            {
-                if (_pendingExecutions.TryGetValue(result.ExecutionId, out var pending))
-                {
-                    pending.ResponseTcs.TrySetResult(result);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.Warning($"[Macros] Failed to parse MacroResult payload: {ex.Message}");
-        }
-
-        return Task.CompletedTask;
-    }
 
     private static string NormalizeOs(string? os)
     {
@@ -342,28 +412,14 @@ public partial class MacrosViewModel : ViewModelBase
 
             var requestJson = JsonSerializer.Serialize(request);
             var requestPayload = Encoding.UTF8.GetBytes(requestJson);
-            var responseTcs = new TaskCompletionSource<MacroResultPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var pending = new PendingMacroExecution(macro.RequiresUI, responseTcs);
-
-            lock (_pendingExecutionsLock)
-            {
-                _pendingExecutions[executionId] = pending;
-            }
-
-            await UnifiedProtocolClient.Instance.SendMessageAsync(
+            var resultPayload = await UnifiedProtocolClient.Instance.SendRequestAndWaitForResponseAsync(
                 UnifiedMessageType.MacroExecute,
                 requestPayload,
+                UnifiedMessageType.MacroResult,
+                TimeSpan.FromSeconds(15),
                 CancellationToken.None);
 
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(15));
-            var completed = await Task.WhenAny(responseTcs.Task, timeoutTask);
-
-            lock (_pendingExecutionsLock)
-            {
-                _pendingExecutions.Remove(executionId);
-            }
-
-            if (completed != responseTcs.Task)
+            if (resultPayload is null)
             {
                 StatusText = "❌ Execution timed out after 15 seconds.";
                 ErrorDialogTitle = "Execution Timeout";
@@ -373,7 +429,17 @@ public partial class MacrosViewModel : ViewModelBase
                 return;
             }
 
-            var result = await responseTcs.Task;
+            var resultJson = Encoding.UTF8.GetString(resultPayload);
+            var result = JsonSerializer.Deserialize<MacroResultPayload>(resultJson);
+            if (result is null)
+            {
+                StatusText = "❌ Invalid response from target.";
+                ErrorDialogTitle = "Execution Failed";
+                ErrorDialogMessage =
+                    "The target returned an invalid MacroResult payload.";
+                IsErrorDialogVisible = true;
+                return;
+            }
 
             if (result.ExitCode != 0)
             {
@@ -387,7 +453,7 @@ public partial class MacrosViewModel : ViewModelBase
                 return;
             }
 
-            if (pending.RequiresUI)
+            if (macro.RequiresUI)
             {
                 const string msg = "App opened";
                 StatusText = $"✔ {msg}";
@@ -439,10 +505,30 @@ public partial class MacrosViewModel : ViewModelBase
         {
             // Refresh device list to catch newly connected peers
             await LoadDevicesAsync();
+
+            var onlinePeers = OnlineDevices.Where(d => d.IsOnline && !d.IsSelf).ToList();
+            if (onlinePeers.Count == 0)
+            {
+                StatusText = "⚠ No online peers found for mesh sync.";
+                return;
+            }
+
+            var settings = SettingsService.Instance.Load();
+            int pairedPeers = onlinePeers.Count(p =>
+                settings.PeerUsernames.ContainsKey(p.IpAddress));
+            if (pairedPeers == 0)
+            {
+                StatusText =
+                    "⚠ No paired peers available for sync yet. Pair at least one peer first.";
+                return;
+            }
+
             await MacroService.Instance.SyncToMeshAsync([.. Macros], OnlineDevices);
-            int peerCount = OnlineDevices.Count(d => d.IsOnline && !d.IsSelf);
-            StatusText = $"✔ Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}";
-            ShowToastInternal($"Macros synced to {peerCount} peer{(peerCount == 1 ? "" : "s")}", "⇄");
+            StatusText =
+                $"✔ Macros synced to {pairedPeers} paired peer{(pairedPeers == 1 ? "" : "s")}";
+            ShowToastInternal(
+                $"Macros synced to {pairedPeers} paired peer{(pairedPeers == 1 ? "" : "s")}",
+                "⇄");
         }
         catch (Exception ex)
         {
