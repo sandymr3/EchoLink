@@ -44,47 +44,51 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <!-- Action buttons - WrapPanel for responsive layout -->
-                    <WrapPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                        <WrapPanel.Styles>
+                    <!-- Action buttons - 2x2 Grid for responsive layout -->
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" HorizontalAlignment="Stretch">
+                        <Grid.Styles>
                             <Style Selector="Button">
-                                <Setter Property="Margin" Value="0,0,8,8"/>
-                                <Setter Property="MinWidth" Value="100"/>
+                                <Setter Property="Margin" Value="4"/>
+                                <Setter Property="HorizontalAlignment" Value="Stretch"/>
                             </Style>
-                        </WrapPanel.Styles>
-                        <Button Classes="Secondary"
+                        </Grid.Styles>
+                        <Button Grid.Row="0" Grid.Column="0"
+                                Classes="Secondary"
                                 Command="{Binding ShowJoinPopupCommand}"
                                 ToolTip.Tip="Connect to another device via PIN">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                 <TextBlock Text="🔗" FontSize="14"/>
                                 <TextBlock Text="Join" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button Classes="Secondary"
+                        <Button Grid.Row="0" Grid.Column="1"
+                                Classes="Secondary"
                                 Command="{Binding GeneratePairingInviteCommand}"
                                 ToolTip.Tip="Generate a PIN for another user to connect to you">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                 <TextBlock Text="🔐" FontSize="14"/>
                                 <TextBlock Text="Pair" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button Classes="Secondary"
+                        <Button Grid.Row="1" Grid.Column="0"
+                                Classes="Secondary"
                                 Command="{Binding GenerateGuestInviteCommand}"
                                 ToolTip.Tip="Invite a guest to connect temporarily">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                 <TextBlock Text="👤" FontSize="14"/>
                                 <TextBlock Text="Guest" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <Button Classes="Primary"
+                        <Button Grid.Row="1" Grid.Column="1"
+                                Classes="Primary"
                                 Command="{Binding RefreshNetworkCommand}"
                                 ToolTip.Tip="Refresh network status">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                 <TextBlock Text="🔄" FontSize="14"/>
                                 <TextBlock Text="Refresh" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                    </WrapPanel>
+                    </Grid>
 
                     <!-- IP Display -->
                     <Border Background="#121212"
