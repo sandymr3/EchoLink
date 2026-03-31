@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EchoLink.Models;
@@ -27,6 +28,11 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private bool _minimizeToTray = true;
     [ObservableProperty] private bool _showNotifications = true;
 
+    // ── App Shield PIN ──────────────────────────────────────────────────
+    [ObservableProperty] private bool _isAppShieldPinConfigured;
+    [ObservableProperty] private string _appShieldStatusText = "No PIN configured.";
+    [ObservableProperty] private bool _showRemovePinConfirm;
+
     // ── Hotkeys ─────────────────────────────────────────────────────────
     public ObservableCollection<HotkeyBinding> Hotkeys { get; } = [];
     public ObservableCollection<ClipboardShareDevice> ClipboardShareDevices { get; } = [];
@@ -44,6 +50,7 @@ public partial class SettingsViewModel : ViewModelBase
     {
         LoadSettings();
         _ = RefreshClipboardDevicesAsync();
+        _ = RefreshAppShieldStatusAsync();
     }
 
     private void LoadSettings()
@@ -93,6 +100,8 @@ public partial class SettingsViewModel : ViewModelBase
     [RelayCommand]
     private void SaveSettings()
     {
+        var existing = _settings.Load();
+
         var selectedTargets = ClipboardShareDevices
             .Where(d => d.IsSelected)
             .Select(d => d.IpAddress)
@@ -117,7 +126,17 @@ public partial class SettingsViewModel : ViewModelBase
                 ActionName = h.ActionName,
                 KeyGesture = h.KeyGesture,
                 IsEnabled = h.IsEnabled
-            }).ToList()
+            }).ToList(),
+
+            IsLoggedIn = existing.IsLoggedIn,
+            IsAppShieldEnabled = existing.IsAppShieldEnabled,
+            HasSeenAppShieldOnboarding = existing.HasSeenAppShieldOnboarding,
+            LinuxAppShieldPinSalt = existing.LinuxAppShieldPinSalt,
+            LinuxAppShieldPinHash = existing.LinuxAppShieldPinHash,
+            LinuxAppShieldPinIterations = existing.LinuxAppShieldPinIterations,
+            WindowsAppShieldPinSalt = existing.WindowsAppShieldPinSalt,
+            WindowsAppShieldPinHash = existing.WindowsAppShieldPinHash,
+            WindowsAppShieldPinIterations = existing.WindowsAppShieldPinIterations,
         };
 
         _settings.Save(data);
@@ -197,6 +216,101 @@ public partial class SettingsViewModel : ViewModelBase
         }
         ShowSaved = true;
         _ = HideSavedBadgeAsync();
+    }
+
+    [RelayCommand]
+    private async Task SetupPinAsync()
+    {
+        AppShieldStatusText = "Setting up PIN...";
+        await AppShieldService.Instance.SetupShieldAsync();
+
+        bool configured = await AppShieldService.Instance.IsShieldConfiguredAsync();
+        if (!configured)
+        {
+            AppShieldStatusText = "PIN setup canceled or failed.";
+            return;
+        }
+
+        var data = _settings.Load();
+        data.IsAppShieldEnabled = true;
+        data.HasSeenAppShieldOnboarding = true;
+        _settings.Save(data);
+
+        IsAppShieldPinConfigured = true;
+        AppShieldStatusText = "PIN configured. App Shield is enabled.";
+    }
+
+    [RelayCommand]
+    private async Task ChangePinAsync()
+    {
+        AppShieldStatusText = "Changing PIN...";
+        await AppShieldService.Instance.SetupShieldAsync();
+
+        bool configured = await AppShieldService.Instance.IsShieldConfiguredAsync();
+        if (!configured)
+        {
+            AppShieldStatusText = "PIN change canceled or failed.";
+            return;
+        }
+
+        var data = _settings.Load();
+        data.IsAppShieldEnabled = true;
+        data.HasSeenAppShieldOnboarding = true;
+        _settings.Save(data);
+
+        IsAppShieldPinConfigured = true;
+        AppShieldStatusText = "PIN changed successfully.";
+    }
+
+    [RelayCommand]
+    private void RequestRemovePin()
+    {
+        ShowRemovePinConfirm = true;
+    }
+
+    [RelayCommand]
+    private void CancelRemovePin()
+    {
+        ShowRemovePinConfirm = false;
+    }
+
+    [RelayCommand]
+    private async Task ConfirmRemovePinAsync()
+    {
+        var data = _settings.Load();
+
+        data.IsAppShieldEnabled = false;
+
+        data.LinuxAppShieldPinSalt = "";
+        data.LinuxAppShieldPinHash = "";
+        data.LinuxAppShieldPinIterations = 120000;
+
+        data.WindowsAppShieldPinSalt = "";
+        data.WindowsAppShieldPinHash = "";
+        data.WindowsAppShieldPinIterations = 120000;
+
+        _settings.Save(data);
+
+        ShowRemovePinConfirm = false;
+        await RefreshAppShieldStatusAsync();
+        AppShieldStatusText = "PIN removed. App Shield disabled.";
+    }
+
+    private async Task RefreshAppShieldStatusAsync()
+    {
+        bool configured = await AppShieldService.Instance.IsShieldConfiguredAsync();
+        IsAppShieldPinConfigured = configured;
+
+        if (!configured)
+        {
+            AppShieldStatusText = "No PIN configured.";
+            return;
+        }
+
+        var data = _settings.Load();
+        AppShieldStatusText = data.IsAppShieldEnabled
+            ? "PIN configured and required on app launch."
+            : "PIN configured but currently not required.";
     }
 
     [RelayCommand]

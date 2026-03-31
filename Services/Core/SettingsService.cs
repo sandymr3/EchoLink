@@ -81,6 +81,19 @@ public class SettingsData
 
     // ── Auth State ──
     public bool IsLoggedIn { get; set; }
+    public bool IsAppShieldEnabled { get; set; }
+    public bool HasSeenAppShieldOnboarding { get; set; }
+
+    // ── Linux App Shield (PIN) ──
+    public string LinuxAppShieldPinSalt { get; set; } = "";
+    public string LinuxAppShieldPinHash { get; set; } = "";
+    public int LinuxAppShieldPinIterations { get; set; } = 120000;
+
+    // ── Windows App Shield (PIN fallback) ──
+    public string WindowsAppShieldPinSalt { get; set; } = "";
+    public string WindowsAppShieldPinHash { get; set; } = "";
+    public int WindowsAppShieldPinIterations { get; set; } = 120000;
+
 }
 
 public class HotkeyData

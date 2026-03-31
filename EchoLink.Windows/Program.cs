@@ -11,6 +11,9 @@ sealed class Program
     {
         Console.WriteLine("[DEBUG] Starting background services...");
 
+        // Register Windows-native App Shield implementation.
+        EchoLink.Services.AppShieldService.Instance = new EchoLink.Services.WindowsAppShieldService();
+
         // Start clipboard sync before UI to keep background synchronization active.
         try
         {

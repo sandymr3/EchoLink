@@ -12,6 +12,7 @@ sealed class Program
     public static void Main(string[] args)
     {
         EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new LinuxAudioRuntimeBridge();
+        EchoLink.Services.AppShieldService.Instance = new EchoLink.Services.LinuxAppShieldService();
         
         // Start headless clipboard daemon BEFORE UI loads (event-driven, no polling)
         try

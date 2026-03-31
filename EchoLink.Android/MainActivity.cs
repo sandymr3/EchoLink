@@ -122,6 +122,7 @@ public class MainActivity : AvaloniaMainActivity<App>
         EchoLink.App.AndroidActivityInstance = this;
         EchoLink.Services.TailscaleService.Instance.NativeBridge = new AndroidNativeMeshBridge();
         EchoLink.Services.AudioStreamingService.Instance.RuntimeBridge = new AndroidAudioRuntimeBridge();
+        EchoLink.Services.AppShieldService.Instance = new EchoLink.Services.AndroidAppShieldService();
         EchoLink.Services.Auth.AuthService.PlatformHandler = new EchoLink.Android.Auth.AndroidAuthPlatformHandler();
 
         return base.CustomizeAppBuilder(builder)

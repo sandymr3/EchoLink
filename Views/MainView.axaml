@@ -113,5 +113,76 @@
                 </StackPanel>
             </Border>
         </Border>
+
+        <Border Grid.ColumnSpan="2" Background="#D9111111" IsVisible="{Binding IsAppLocked}" ZIndex="120">
+            <Border Background="#1B1B1B"
+                    BorderBrush="#323232"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="24"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="520">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="App Locked"
+                               FontSize="24"
+                               FontWeight="Bold"
+                               Foreground="#FFFFFF"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="EchoLink is protected by App Shield."
+                               FontSize="14"
+                               Foreground="#C9C9C9"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding AppLockStatusText}"
+                               FontSize="12"
+                               Foreground="#A8A8A8"
+                               HorizontalAlignment="Center"/>
+                    <Button Content="Unlock"
+                            Command="{Binding UnlockAppCommand}"
+                            IsEnabled="{Binding !IsUnlockInProgress}"
+                            HorizontalAlignment="Center"
+                            Background="#007ACC"
+                            Foreground="#FFFFFF"
+                            Padding="16,8"/>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <Border Grid.ColumnSpan="2" Background="#B2000000" IsVisible="{Binding ShowAppShieldOnboarding}" ZIndex="121">
+            <Border Background="#1A1A1A"
+                    BorderBrush="#2F2F2F"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="24"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="560">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Protect EchoLink on App Open?"
+                               FontSize="20"
+                               FontWeight="Bold"
+                               Foreground="#FFFFFF"/>
+                    <TextBlock Text="Would you like to require a PIN or biometric unlock to open EchoLink?"
+                               TextWrapping="Wrap"
+                               Foreground="#C8C8C8"
+                               FontSize="13"/>
+                    <TextBlock Text="{Binding AppShieldOnboardingStatusText}"
+                               Foreground="#9FC8FF"
+                               FontSize="12"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                        <Button Content="No Thanks"
+                                Command="{Binding SkipAppShieldSetupCommand}"
+                                Background="#3A3A3A"
+                                Foreground="#FFFFFF"
+                                Padding="14,8"/>
+                        <Button Content="Set Up"
+                                Command="{Binding SetupAppShieldCommand}"
+                                Background="#00A96E"
+                                Foreground="#FFFFFF"
+                                Padding="14,8"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
     </Grid>
 </UserControl>

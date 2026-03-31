@@ -7,12 +7,13 @@
     <ApplicationId>com.echolink.app</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
     <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-    <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
     <AndroidManifest>AndroidManifest.xml</AndroidManifest>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia.Android" Version="11.3.12" />
+    <PackageReference Include="Xamarin.AndroidX.Biometric" Version="1.1.0.32" />
   </ItemGroup>
 
   <ItemGroup>
