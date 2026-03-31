@@ -143,6 +143,7 @@ You need at least two devices logged in to pair them.
 - SSH keys are exchanged and added to `~/.ssh/authorized_keys`
 - Both devices save each other to their paired list
 
+---
 
 ## 5. Try Core Features
 
@@ -181,7 +182,8 @@ You need at least two devices logged in to pair them.
 1. Go to **Remote Control** tab
 2. Select a paired device
 3. **Mouse:** Move your mouse in the trackpad area—remote cursor moves
-4. **System Actions:** Click Lock, Restart, or Shutdown
+4. **Click Buttons:** Use 🖱️ Left, 🖱️ Middle, 🖱️ Right buttons for mouse clicks
+5. **System Actions:** Click Lock, Restart, or Shutdown
 
 **Linux note:** Requires `loginctl` for lock command. May need polkit configuration.
 
@@ -192,7 +194,7 @@ You need at least two devices logged in to pair them.
 3. View real-time CPU, RAM, disk usage
 4. Linux/Android also show battery and temperature
 
-Data refreshes every 10 seconds automatically.
+Data refreshes every 10 seconds automatically. Click **↻ Refresh** to update device list.
 
 ### Audio Streaming
 
@@ -286,6 +288,18 @@ Guest PINs expire after 24 hours by default.
 - Check `~/.config/headscale/config.yaml` for correct listen address
 - Ensure port 8080 is accessible
 - Verify pre-auth keys haven't expired
+
+### "Device shows as offline"
+
+- Click **↻ Refresh** button in the feature section
+- Device list auto-refreshes but may need manual trigger
+- Selected device is preserved after refresh
+
+### "Duplicate devices in list"
+
+- This was a known issue with IP-based identity
+- Latest version uses NodeId-based identity (no duplicates)
+- If you see duplicates, restart both devices to clear cache
 
 ---
 

@@ -55,7 +55,7 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnExplicitShutdown;
+            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
 
             // Show a visible startup window immediately so desktop mode never starts headless.
             var loadingWindow = new Avalonia.Controls.Window
@@ -70,21 +70,30 @@ public partial class App : Application
             loadingWindow.Show();
 
             // Hook cleanup
-            desktop.Exit += (_, _) =>
+            desktop.Exit += async (sender, args) =>
             {
-                // Run cleanup synchronously so the process doesn't exit prematurely
-                Task.Run(async () =>
+                try
                 {
+                    _log.Info("[Shutdown] Cleaning up services...");
+                    
+                    // Stop all background services
                     await ClipboardSyncService.Instance.StopAsync();
                     await AudioStreamingService.Instance.StopAllAsync();
+                    
                     if (TailscaleService.Instance.IsEphemeralSession)
                     {
                         await TailscaleService.Instance.LogoutAsync();
                     }
-                }).Wait(TimeSpan.FromSeconds(3));
-
-                EchoLink.Services.UnifiedProtocol.UnifiedProtocolService.Instance.StopServer();
-                TailscaleService.Instance.StopDaemon();
+                    
+                    EchoLink.Services.UnifiedProtocol.UnifiedProtocolService.Instance.StopServer();
+                    TailscaleService.Instance.StopDaemon();
+                    
+                    _log.Info("[Shutdown] Cleanup complete.");
+                }
+                catch (Exception ex)
+                {
+                    _log.Error($"[Shutdown] Cleanup error: {ex.Message}");
+                }
             };
 
             // Check auth state asynchronously, then show the right window

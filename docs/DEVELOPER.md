@@ -64,10 +64,19 @@ App → SOCKS5 (1055) → Go tsnet → Tailscale → Remote Device
 
 2. **Unified Protocol (Port 55555)**
    - Clipboard sync
-   - Remote control commands
+   - Remote control commands (mouse, keyboard, system actions)
    - Audio streaming
    - System monitoring
    - Custom TCP: `[Type:1][Length:4][Payload:N]`
+
+### Device Identity (NodeId-Based)
+
+As of 2026-03-31, EchoLink uses **NodeId** (persistent) instead of IP address (ephemeral) for device identity:
+
+- **Settings Storage:** `ApprovedGuests` dictionary keyed by NodeId
+- **Deduplication:** Groups devices by NodeId, not Name+UserId
+- **IP Tracking:** Automatic update when device IP changes
+- **Legacy Support:** Fallback to old `PeerUsernames` for backward compatibility
 
 ---
 
@@ -81,13 +90,13 @@ EchoLink/
 │
 ├── Models/
 │   ├── Device.cs            # Peer device representation
-│   ├── TelemetrySnapshot.cs # CPU/RAM/disk data
+│   ├── ApprovedGuest.cs     # Trusted guest device info
 │   └── ...
 │
 ├── ViewModels/
 │   ├── DashboardViewModel.cs      # Device list, pairing
 │   ├── FileTransferViewModel.cs   # SFTP browser
-│   ├── RemoteControlViewModel.cs  # Mouse, system actions
+│   ├── RemoteControlViewModel.cs  # Mouse, system actions, click buttons
 │   ├── ClipboardViewModel.cs      # Clipboard hub
 │   ├── SystemMonitorViewModel.cs  # Telemetry display
 │   ├── MacrosViewModel.cs         # Macro buttons
@@ -103,23 +112,26 @@ EchoLink/
 ├── Services/
 │   ├── Core/
 │   │   ├── NetworkService.cs         # SOCKS5 connections
-│   │   └── SettingsService.cs        # Persistent config
+│   │   ├── SettingsService.cs        # Persistent config (NodeId-based)
+│   │   ├── DeviceDiscoveryService.cs # Device discovery, IP tracking
+│   │   └── TrustStoreService.cs      # Guest approval by NodeId
 │   │
 │   ├── Mesh/
-│   │   └── TailScaleService.cs       # Daemon management
+│   │   └── TailScaleService.cs       # Daemon management, deduplication
 │   │
 │   ├── Auth/
 │   │   ├── AuthService.cs            # OIDC login
 │   │   └── MiddlewareClient.cs       # PIN API client
 │   │
 │   ├── Ssh/
-│   │   ├── SshPairingService.cs      # Key exchange
+│   │   ├── SshPairingService.cs      # Key exchange (NodeId-based)
 │   │   ├── SftpService.cs            # File transfer
 │   │   └── SshTunnelService.cs       # Port forwarding
 │   │
 │   ├── UnifiedProtocol/
 │   │   ├── UnifiedProtocolService.cs # TCP server (55555)
 │   │   ├── UnifiedProtocolClient.cs  # TCP client
+│   │   ├── UnifiedProtocolClientExtensions.cs # Send helpers
 │   │   └── UnifiedMessageType.cs     # Message enum
 │   │
 │   ├── Clipboard/
@@ -129,7 +141,9 @@ EchoLink/
 │   │   └── AudioStreamingService.cs  # Opus encode/decode
 │   │
 │   ├── RemoteControl/
-│   │   └── RemoteControlService.cs   # Mouse/system commands
+│   │   ├── RemoteControlService.cs   # Mouse/system commands
+│   │   ├── MouseControlService.cs    # Mouse event handling
+│   │   └── KeyboardControlService.cs # Keyboard events
 │   │
 │   ├── SystemMonitor/
 │   │   └── SystemMonitorService.cs   # Telemetry collector
@@ -139,8 +153,7 @@ EchoLink/
 │
 ├── Go/ (Android native bridge)
 │   ├── main.go              # tsnet server, exports
-│   ├── sftp.go              # SFTP handler
-│   └── audio.go             # Audio capture
+│   └── ...
 │
 ├── EchoLink.Android/        # Android-specific C#
 ├── EchoLink.Windows/        # Windows-specific C#
@@ -151,511 +164,199 @@ EchoLink/
 
 ## Building
 
-### Desktop (Windows/Linux/macOS)
+### Windows/Linux/macOS
 
 ```bash
-# Debug
 dotnet build
-
-# Release
-dotnet build -c Release
-
-# Run
 dotnet run --project EchoLink.csproj
-
-# Self-contained publish
-dotnet publish -c Release -r win-x64 --self-contained
-dotnet publish -c Release -r linux-x64 --self-contained
 ```
 
 ### Android
-
-**Prerequisites:**
-- Go 1.20+
-- Android NDK r25+
-- `gomobile` installed
 
 ```bash
 cd Go
 gomobile init
 gomobile bind -target android -o ../EchoLink.Android/libecholink.aar ./...
 
-# Build Android app
-cd ../EchoLink.Android
-dotnet build -c Release
-```
-
-**Troubleshooting Android builds:**
-
-If you get `undefined: tsnet`:
-```bash
-go get tailscale.com/tsnet
-go mod tidy
-```
-
-If you get Cgo errors:
-```bash
-export CGO_ENABLED=1
-export ANDROID_NDK_HOME=/path/to/ndk
+# Then build Android project in Visual Studio
 ```
 
 ---
 
 ## Debugging
 
-### Desktop
+### Visual Studio / VS Code
 
-**Visual Studio / Rider:**
-- Standard .NET debugging works
-- Set breakpoints in ViewModels/Services
-- Attach to running process if needed
+1. Set breakpoints in C# code
+2. `F5` to start debugging
+3. Console output shows service logs
 
-**VS Code:**
-```json
-// .vscode/launch.json
-{
-  "name": "EchoLink",
-  "type": "coreclr",
-  "request": "launch",
-  "program": "${workspaceFolder}/bin/Debug/net10.0/EchoLink.dll",
-  "args": [],
-  "cwd": "${workspaceFolder}",
-  "console": "internalConsole"
-}
+### Android (Go Bridge)
+
+```bash
+adb logcat | grep EchoLink-Go
 ```
 
-### Android
+### Unified Protocol Messages
 
-**Attach debugger:**
-```bash
-# Start app
-adb shell am start -n com.echolink.app/.MainActivity
-
-# Attach debugger
-adb forward tcp:55555 tcp:55555
-dotnet attach <pid>
+Enable debug logging in `LoggingService` to see message types:
 ```
-
-**View Go logs:**
-```bash
-adb logcat | grep -i echolink
-```
-
-**Rebuild Go bridge:**
-```bash
-cd Go
-gomobile bind -target android -v -o ../EchoLink.Android/libecholink.aar ./...
+[Unified] Sending MouseMove (dx=10, dy=5)
+[Unified] Received ClipboardSync (45 chars)
 ```
 
 ---
 
 ## Platform-Specific Development
 
+### Android
+
+- **All TCP connections MUST use SOCKS5 proxy** at `127.0.0.1:1055`
+- SSH runs on port **2222**, not 22
+- Go bridge handles `tsnet`, SSH server, audio capture
+- Files saved to `/storage/emulated/0/Download/`
+
 ### Windows
 
-**SSH Server Installation:**
-```csharp
-// Services/Ssh/SshInstallationService.cs
-// Auto-installs OpenSSH with admin rights
-// Patches sshd_config to use ~/.ssh/authorized_keys
-```
-
-**Audio:**
-- Uses `WasapiLoopbackCapture` (NAudio)
-- VB-Audio Cable for virtual mic
-- Driver INF in `Assets/VirtualAudio/`
-
-**Firewall Rules:**
-```powershell
-# Added automatically during install
-netsh advfirewall firewall add rule name="EchoLink" dir=in action=allow program="C:\path\to\echolink.exe" enable=yes
-```
+- Full WASAPI loopback for system audio
+- VB-Audio Cable for virtual microphone routing
+- OpenSSH auto-install with admin rights
 
 ### Linux
 
-**SSH Server:**
-```bash
-# Uses system openssh-server
-sudo systemctl enable sshd
-sudo systemctl start sshd
-
-# Ensure ~/.ssh directory exists
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-```
-
-**Audio (PulseAudio):**
-```bash
-# Create virtual sink
-pactl load-module module-null-sink sink_name=EchoLink_Sink
-
-# Route app audio to EchoLink_Sink
-pactl move-sink-input <app_id> EchoLink_Sink
-
-# Capture from monitor
-parec -d EchoLink_Sink.monitor | opusenc - audio.opus
-```
-
-**Telemetry Sources:**
-- CPU: `/proc/stat`
-- RAM: `/proc/meminfo`
-- Disk: `df`
-- Temperature: `/sys/class/thermal/thermal_zone*/temp`
-- Battery: `/sys/class/power_supply/BAT*/uevent`
-
-**System Commands:**
-```bash
-# Lock
-loginctl lock-session
-
-# Restart
-systemctl reboot
-
-# Shutdown
-systemctl poweroff
-```
-
-### Android
-
-**Go Bridge Exports:**
-```go
-//export StartEchoLinkNode
-func StartEchoLinkNode(configDir, authKey, hostname, localIp, isEphemeral string) int
-
-//export GetBackendState  // "Stopped", "Starting", "NeedsLogin", "Running", "Error"
-//export GetTailscaleIp
-//export GetPeerListJson
-//export SetTempSshPassword
-```
-
-**C# Interop:**
-```csharp
-// Must use CharSet.Ansi!
-[DllImport("libecholink", CharSet = CharSet.Ansi)]
-private static extern IntPtr StartEchoLinkNode(
-    string configDir,
-    string authKey,
-    string hostname,
-    string localIp,
-    string isEphemeral);
-```
-
-**SOCKS5 is Mandatory:**
-```csharp
-// WRONG - will fail on Android
-var client = new TcpClient("100.115.42.17", 22);
-
-// CORRECT - routes through proxy
-var client = await networkService.ConnectViaSocks5Async("100.115.42.17", 22);
-```
-
-**File Paths:**
-```csharp
-// Android uses scoped storage
-var downloadPath = Android.App.Application.Context
-    .GetExternalFilesDir(null).AbsolutePath;
-// → /storage/emulated/0/Android/data/com.echolink.app/files/
-```
+- Uses system OpenSSH server
+- Audio requires PulseAudio/PipeWire routing
+- Telemetry from `/proc` and `/sys/class/thermal`
 
 ---
 
 ## Key Components
 
-### TailscaleService
+### DeviceDiscoveryService
 
-Manages the embedded `tailscaled` daemon.
-
-```csharp
-// Start daemon
-await tailScaleService.StartAsync(authKey);
-
-// Get peers
-var peers = await tailScaleService.GetPeersAsync();
-
-// Check status
-var status = await tailScaleService.GetNetworkStatusAsync();
-```
-
-**Key points:**
-- Runs in userspace mode (`--tun=userspace-networking`)
-- SOCKS5 proxy on `localhost:1055`
-- State file: `~/.config/echolink/tailscaled.state`
-
-### NetworkService
-
-Universal SOCKS5 connection handler.
-
-```csharp
-// Connect to any Tailscale IP
-var stream = await networkService.ConnectViaSocks5Async(
-    "100.115.42.17",  // target IP
-    55555             // port
-);
-```
-
-**SOCKS5 handshake:**
-```
-C: CONNECT 100.115.42.17:55555
-S: OK
-C: [data]
-```
+Centralized device discovery and caching:
+- Fetches devices from Tailscale
+- Filters by UserId (Ecosystem) or TrustStore (Guests)
+- Tracks IP changes via NodeId
+- Injects offline approved guests (phantoms)
+- Fires `DeviceListChanged` event for UI updates
 
 ### UnifiedProtocolService
 
-Custom TCP server for all non-SSH features.
-
-**Message format:**
-```
-[Type: 1 byte][Length: 4 bytes big-endian][Payload: N bytes]
-```
-
-**Example: MouseMove**
-```
-Type: 0x01
-Length: 0x00000004
-Payload: [dx:int16][dy:int16]
-```
-
-**Register handler:**
-```csharp
-unifiedProtocolService.RegisterHandler(
-    UnifiedMessageType.MouseMove,
-    async (stream, payload) => {
-        var dx = BitConverter.ToInt16(payload, 0);
-        var dy = BitConverter.ToInt16(payload, 2);
-        await MoveMouseAsync(dx, dy);
-    }
-);
-```
+TCP server on port 55555:
+- Accepts connections from peers
+- Dispatches messages to registered handlers
+- Message format: `[Type:1][Length:4][Payload:N]`
 
 ### ClipboardSyncService
 
-Three modes:
+Event-driven clipboard sync:
+- Monitors local clipboard changes
+- Broadcasts to eligible peers via Unified Protocol
+- Applies remote clipboard to local device
+- Per-peer failure tracking with exponential backoff
 
-1. **MirrorClip** (auto-broadcast)
-   ```csharp
-   clipboardSyncService.EnableMirrorClip();
-   // Monitors clipboard, broadcasts changes to all paired devices
-   ```
+### SshPairingService
 
-2. **SnapShare** (manual push)
-   ```csharp
-   await clipboardSyncService.PushClipboardAsync(targetDevices);
-   ```
-
-3. **GhostPaste** (remote apply)
-   ```csharp
-   await clipboardSyncService.ApplyRemoteClipboardAsync(device);
-   // Applies clipboard without showing it locally
-   ```
-
-**Journal for reliability:**
-```csharp
-// Failed sends are journaled and retried with exponential backoff
-// Journal stored in ~/.config/echolink/clipboard_journal.json
-```
-
-### AudioStreamingService
-
-**Encoder config:**
-```csharp
-var encoder = OpusEncoder.Create(48000, 1, OPUS_APPLICATION_RESTRICTED_LOWDELAY);
-encoder.Bitrate = 24000; // 24 kbps
-_frameSize = 960; // 20ms @ 48kHz
-```
-
-**Capture (Windows):**
-```csharp
-var capture = new WasapiLoopbackCapture();
-capture.DataAvailable += (s, e) => {
-    var pcm = ConvertFloat32ToInt16Mono(e.Buffer);
-    var encoded = encoder.Encode(pcm);
-    SendAudioFrame(encoded);
-};
-```
-
-**Playback:**
-```csharp
-var player = new WaveOutEvent();
-player.Init(new RawSourceWaveStream(decoderStream, waveFormat));
-player.Play();
-```
+SSH key exchange on port 44444:
+- Listens for pairing requests
+- Exchanges public keys
+- Saves to `ApprovedGuests` by NodeId
+- Manages `authorized_keys` file
 
 ---
 
 ## Testing
 
-### Unit Tests
-
-```bash
-# Run all tests
-dotnet test
-
-# Run specific test class
-dotnet test --filter "FullyQualifiedName~ClipboardSyncServiceTests"
-
-# Coverage
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
-```
-
-### Integration Tests
-
-**Test pairing flow:**
-```csharp
-[Fact]
-public async Task PairingFlow_CompletesSuccessfully()
-{
-    // Arrange
-    var deviceA = new TestDevice();
-    var deviceB = new TestDevice();
-    
-    // Act
-    var pin = await deviceA.GeneratePairingPinAsync();
-    await deviceB.ClaimPinAsync(pin);
-    
-    // Assert
-    Assert.True(deviceA.IsPaired(deviceB));
-    Assert.True(deviceB.IsPaired(deviceA));
-}
-```
-
 ### Manual Testing Checklist
 
-Before PR:
-- [ ] Login works (Google OIDC)
-- [ ] Pairing works (PIN and direct)
-- [ ] Clipboard sync works (all three modes)
-- [ ] File transfer works (upload + download)
-- [ ] Remote control works (mouse + system actions)
-- [ ] Audio streaming works (both directions)
-- [ ] System monitor shows data
-- [ ] Macros execute
-- [ ] Android build runs (if changes affect Android)
+- [ ] Login with Google OIDC
+- [ ] Pair two devices via PIN
+- [ ] Clipboard sync (both directions)
+- [ ] File transfer (upload/download)
+- [ ] Remote mouse control + click buttons
+- [ ] System monitor shows correct values
+- [ ] Audio streaming works
+- [ ] Macros execute on target
+
+### Automated Tests
+
+```bash
+dotnet test
+```
+
+(Tests are minimal; more needed!)
 
 ---
 
 ## Code Style
 
-### C# Conventions
+### Naming Conventions
 
-**Naming:**
-- Classes: `PascalCase`
-- Methods: `PascalCase`
-- Private fields: `_camelCase`
-- Interfaces: `IPascalCase`
+```csharp
+public class MyClass { }           // Classes: PascalCase
+public void MyMethod() { }         // Methods: PascalCase
+private string _privateField;      // Fields: _camelCase
+public string PublicProperty { get; set; }  // Properties: PascalCase
+```
 
-**Async:**
-- Always use `Async` suffix
-- Return `Task` or `Task<T>`, never `void`
+### Async/Await
+
+- Always use `Async` suffix for async methods
+- Pass `CancellationToken` for long-running operations
 - Use `ConfigureAwait(false)` in library code
 
-```csharp
-public async Task<Device> GetDeviceAsync(string id)
-{
-    // ...
-}
-```
-
-**Dependency Injection:**
-- Constructor injection only
-- Register services in `App.axaml.cs`
+### Logging
 
 ```csharp
-public class DashboardViewModel
-{
-    private readonly IClipboardSyncService _clipboard;
-    
-    public DashboardViewModel(IClipboardSyncService clipboard)
-    {
-        _clipboard = clipboard;
-    }
-}
+_log.Info($"[ServiceName] Operation completed");
+_log.Error($"[ServiceName] Failed: {ex.Message}");
 ```
 
-### Git Workflow
+### MVVM Pattern
 
-```bash
-# Create branch
-git checkout -b feature/your-feature-name
-
-# Commit (conventional commits)
-git commit -m "feat: add macro sync support"
-git commit -m "fix: android path resolution for SFTP"
-git commit -m "docs: update SETUP.md with Headscale guide"
-
-# Push
-git push origin feature/your-feature-name
-```
-
-**Commit types:**
-- `feat:` New feature
-- `fix:` Bug fix
-- `docs:` Documentation
-- `refactor:` Code reorganization
-- `test:` Tests
-- `chore:` Build/config changes
+- ViewModels inherit from `ViewModelBase`
+- Use `ObservableProperty` attribute for properties
+- Commands use `[RelayCommand]` attribute
 
 ---
 
-## Common Pitfalls
+## Recent Changes (2026-03-31)
 
-### 1. Forgetting SOCKS5 on Android
+### NodeId Migration
 
-```csharp
-// ❌ This will fail on Android
-var client = new TcpClient("100.115.42.17", 22);
+- **Before:** `PeerUsernames` dictionary keyed by IP
+- **After:** `ApprovedGuests` dictionary keyed by NodeId
+- **Benefit:** Devices maintain identity across IP changes
 
-// ✅ Use NetworkService
-var client = await _networkService.ConnectViaSocks5Async("100.115.42.17", 22);
-```
+### Mouse Click Buttons
 
-### 2. Wrong CharSet in P/Invoke
+- Added Left/Right/Middle click buttons to RemoteControl
+- Trackpad sends left-click on touch
+- Uses `UnifiedProtocolClient.SendMouseClickAsync()`
 
-```csharp
-// ❌ Strings will be corrupted
-[DllImport("libecholink")]
-private static extern IntPtr StartEchoLinkNode(string configDir);
+### Refresh Command
 
-// ✅ Specify CharSet.Ansi
-[DllImport("libecholink", CharSet = CharSet.Ansi)]
-private static extern IntPtr StartEchoLinkNode(string configDir);
-```
+- All feature ViewModels now have `RefreshCommand`
+- Triggers fresh device discovery from Tailscale
+- Preserves selected device after refresh
 
-### 3. Using SFTP In-Memory Handler on Android
+### Clipboard Fix
 
-```csharp
-// ❌ Files will be discarded
-var sftp = new SftpClient(conn);
-sftp.Connect();
-using var remoteStream = sftp.Open("/path", FileMode.Create);
-
-// ✅ Use filesystem-backed SFTP
-var sftp = new SftpClient(conn);
-sftp.Connect();
-sftp.UploadFile(localStream, "/path"); // Uses real filesystem
-```
-
-### 4. Not Handling Android Paths
-
-```csharp
-// ❌ Returns null on Android
-var path = file.TryGetLocalPath();
-
-// ✅ Use stream API
-await using var stream = await file.OpenReadAsync();
-await sftp.UploadStreamAsync(stream, remotePath);
-```
+- Fixed PC-to-Phone clipboard sync
+- Was checking old `PeerUsernames` (empty after migration)
+- Now checks `ApprovedGuests` first
 
 ---
 
-## Resources
+## Contributing
 
-- [Avalonia Documentation](https://docs.avaloniaui.net/)
-- [Tailscale Developer Docs](https://tailscale.com/kb/)
-- [Headscale Documentation](https://headscale.net/)
-- [SSH.NET Examples](https://github.com/sshnet/SSH.NET/tree/develop/src/Renci.SshNet.Tests)
-- [Opus Codec Docs](https://opus-codec.org/docs/)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- How to fork and clone
+- Branch naming conventions
+- Pull request process
+- Code review guidelines
 
 ---
 
-**Questions?** Check existing issues or open a new one with the `[dev]` label.
+**Questions?** Open an issue or ask in Discussions!

@@ -418,9 +418,13 @@ public class ClipboardSyncService
         ClipboardSyncMessage message,
         CancellationToken ct)
     {
-        // Peer must be paired, though this direct TCP path does not use the username value itself.
+        // Peer must be paired - check using new ApprovedGuests (NodeId-based) system
+        // Fallback to legacy PeerUsernames for backward compatibility during transition
         var settings = _settings.Load();
-        if (!settings.PeerUsernames.TryGetValue(targetIp, out _))
+        bool isPeerPaired = settings.ApprovedGuests.Values.Any(g => g.LastKnownIp == targetIp) ||
+                           settings.PeerUsernames.TryGetValue(targetIp, out _);
+        
+        if (!isPeerPaired)
         {
             _log.Debug($"MirrorClip Cannot sync to {targetIp} because it is not paired.");
             return false;

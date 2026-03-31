@@ -6,7 +6,7 @@ Secure, SSH-based device-to-device connectivity and sharing across Windows, Linu
 
 <a href='https://github.com/uganthan2005/EchoLink'><img src='https://img.shields.io/badge/Project-Page-green'></a>
 <a href='https://github.com/uganthan2005/EchoLink/issues'><img src='https://img.shields.io/badge/Contributions-Welcome-blue'></a>
-<a href='https://fossunited.org/hack/2026'><img src='https://img.shields.io/badge/FOSS%20Hack-2026-red'></a>
+<a href='https://dotnet.microsoft.com/'><img src='https://img.shields.io/badge/.NET-10-purple'></a>
 
 </div>
 
@@ -23,6 +23,7 @@ You have a Windows desktop, a Linux laptop, and an Android phone. You want to:
 - Send a file to your laptop without uploading it to some cloud first
 - Lock your desktop from your phone when you're away
 - Use your phone as a microphone for your PC
+- Control your PC's mouse from your phone
 
 Existing solutions either require cloud services, work only on specific platforms, or need complex network configuration.
 
@@ -52,8 +53,9 @@ EchoLink creates a **private mesh network** between your devices using Tailscale
 ### Core
 - 🔐 **Private Mesh Network** - Self-hosted Tailscale via Headscale, zero cloud dependency
 - 📱 **Cross-Platform** - Windows, Linux, Android with consistent UX
-- 🔑 **PIN-Based Pairing** - 6-digit PINs for device pairing, no manual IP entry
+- 🔑 **NodeId-Based Identity** - Devices maintain identity across IP changes
 - 🛡️ **SSH Security** - ed25519/RSA key exchange, no passwords
+- 🔄 **Smart Device Discovery** - Automatic IP tracking, no duplicate devices
 
 ### File & Clipboard
 - 📋 **Clipboard Sync** - Auto-broadcast clipboard changes or manual push (SnapShare)
@@ -61,7 +63,7 @@ EchoLink creates a **private mesh network** between your devices using Tailscale
 - 📤 **Multi-Device Support** - Send to multiple devices simultaneously
 
 ### Remote Control & Monitoring
-- 🖱️ **Mouse Control** - Trackpad-style remote mouse movement
+- 🖱️ **Mouse Control** - Trackpad-style remote mouse movement with left/right/middle click buttons
 - ⚡ **System Actions** - Lock, restart, shutdown remote devices
 - 📊 **System Monitor** - Real-time CPU, RAM, disk, battery, temperature
 - 🎤 **Audio Streaming** - Two-way audio (use phone as mic, or stream PC audio)
@@ -97,13 +99,16 @@ EchoLink creates a **private mesh network** between your devices using Tailscale
 - [x] SSH key pair generation and bidirectional exchange (port 44444)
 - [x] SFTP file transfer with remote browsing, progress tracking, Android path handling
 - [x] Clipboard sync with MirrorClip (auto), SnapShare (manual), GhostPaste (remote apply)
-- [x] Remote mouse control and system commands (lock/restart/shutdown)
+- [x] Remote mouse control with trackpad + click buttons (left/right/middle)
+- [x] System commands (lock/restart/shutdown)
 - [x] System monitoring (CPU/RAM/disk/battery/temp) with 10s polling
 - [x] Two-way audio streaming with Opus encoding, VB-Audio Cable routing
 - [x] Macro system with mesh sync and file watcher auto-reload
 - [x] Android Go bridge with `tsnet`, SSH server on port 2222, native audio capture
 - [x] Unified TCP protocol (port 55555) for all non-SSH features
 - [x] Guest device support with time-limited PINs
+- [x] NodeId-based device identity (no duplicates on IP change)
+- [x] Automatic device refresh with selection preservation
 
 ### In Progress / Needs Polish 🚧
 
@@ -134,7 +139,7 @@ User Login → Google OIDC → JWT → Middleware → Tailscale Auth Key → Dae
 
 **2. Device Pairing**
 ```
-Generate PIN (6-digit) → Middleware API → Other device claims PIN → 
+Generate PIN (6-digit) → Middleware API → Other device claims PIN →
 SSH key exchange (port 44444) → Keys added to authorized_keys → Paired
 ```
 
@@ -150,9 +155,9 @@ SSH key exchange (port 44444) → Keys added to authorized_keys → Paired
    │   SSH     │       │  Unified    │
    │  (Port 22)│       │ Protocol    │
    │  SFTP     │       │ (Port 55555)│
-   └─────┬─────┘       └──────┬──────┘
+   └──────────┘       └──────┬──────┘
          │                    │
-         └──────────┬─────────┘
+         └───────────────────┘
                     │
          ┌──────────▼──────────┐
          │   SOCKS5 Proxy      │
@@ -196,7 +201,7 @@ SSH key exchange (port 44444) → Keys added to authorized_keys → Paired
 
 ## 📖 Documentation
 
-- **[Quickstart Guide](docs/SETUP.md)** - Get up and running in 5 minutes
+- **[Quickstart Guide](docs/SETUP.md)** - Get up and running in 10 minutes
 - **[Developer Guide](docs/DEVELOPER.md)** - Architecture deep-dive, building, debugging
 - **[Contributing](docs/CONTRIBUTING.md)** - How to contribute, coding standards
 

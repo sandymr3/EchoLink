@@ -59,7 +59,7 @@ git checkout -b fix/issue-123
 
 **Before coding:**
 1. Read [Developer Guide](DEVELOPER.md) for architecture
-2. Check existing tests for patterns
+2. Check existing code for patterns
 3. If adding a feature, think about tests
 
 **Code style:**
@@ -79,7 +79,7 @@ git checkout -b fix/issue-123
 # Build
 dotnet build
 
-# Run tests
+# Run tests (if available)
 dotnet test
 
 # Run the app
@@ -100,118 +100,64 @@ git add .
 git commit -m "type: description"
 ```
 
-**Commit message format (Conventional Commits):**
+**Commit message format:**
 ```
-feat: add macro sync support
-fix: android path resolution for SFTP
-docs: update SETUP.md with Headscale guide
-refactor: extract clipboard journal logic
-test: add unit tests for AuthService
-chore: update Avalonia to 11.3.12
+feat: add mouse click buttons to remote control
+fix: clipboard sync failing PC-to-Phone
+docs: update README with latest features
+refactor: migrate device identity to NodeId
 ```
 
 **Types:**
 - `feat:` - New feature
 - `fix:` - Bug fix
 - `docs:` - Documentation only
-- `refactor:` - Code reorganization (not a feature or fix)
-- `test:` - Adding/updating tests
-- `chore:` - Build, config, maintenance
+- `refactor:` - Code refactoring
+- `test:` - Adding tests
+- `chore:` - Build/config changes
 
-### 7. Push and Create PR
+### 7. Push and Create Pull Request
 
 ```bash
 git push origin feature/your-feature-name
 ```
 
 Then on GitHub:
-1. Click "Compare & pull request"
-2. Fill out the template
-3. Link related issues: `Closes #123`
-4. Submit
-
-**PR template:**
-```markdown
-## Description
-What does this PR do?
-
-## Related Issue
-Fixes #123
-
-## Testing
-How did you test this?
-
-## Screenshots (if UI changes)
-Before/after screenshots
-
-## Checklist
-- [ ] Code builds without errors
-- [ ] Tests pass
-- [ ] Manual testing completed
-- [ ] Documentation updated (if needed)
-```
+1. Go to your fork
+2. Click "Compare & pull request"
+3. Fill in the template
+4. Link related issues
+5. Submit!
 
 ### 8. Code Review
 
-A maintainer will review your PR. They might:
-- Request changes
-- Ask questions
-- Suggest improvements
-
-**Respond promptly** and make requested changes. Once approved, your PR will be merged.
+- Maintainers will review your PR
+- Address feedback by pushing new commits
+- Once approved, it will be merged
 
 ---
 
-## Reporting Issues
+## Development Setup
 
-### Bug Reports
+### Prerequisites
 
-**Before reporting:**
-- Search existing issues
-- Try latest version
-- Check documentation
+- **.NET 10 SDK** - [Download](https://dotnet.microsoft.com/download)
+- **Git**
+- **VS Code** or **Visual Studio** (Community Edition is free)
+- **Go 1.20+** (for Android development)
+- **Android NDK** (for Android development)
 
-**Include:**
-```markdown
-**Describe the bug**
-Clear description of what's wrong
+### IDE Setup
 
-**To Reproduce**
-Steps to reproduce:
-1. Go to '...'
-2. Click '...'
-3. See error
+**VS Code:**
+1. Install C# extension
+2. Install Avalonia Template extension
+3. Open folder in VS Code
 
-**Expected behavior**
-What should happen?
-
-**Screenshots**
-If applicable
-
-**Environment:**
-- OS: Windows 11 / Ubuntu 22.04 / Android 13
-- .NET version: 10.0.x
-- EchoLink version: v1.0
-
-**Logs**
-Console output, error messages
-```
-
-### Feature Requests
-
-```markdown
-**Is your feature request related to a problem?**
-"I'm always frustrated when..."
-
-**Describe the solution you'd like**
-Clear description
-
-**Describe alternatives you've considered**
-Other solutions you thought about
-
-**Additional context**
-Mockups, examples, use cases
-```
+**Visual Studio:**
+1. Install ".NET desktop development" workload
+2. Install "Mobile development with .NET" (for Android)
+3. Open `echolink.sln`
 
 ---
 
@@ -219,196 +165,126 @@ Mockups, examples, use cases
 
 ### C# Conventions
 
-**Naming:**
 ```csharp
-public class DeviceViewModel { }           // Classes: PascalCase
-public interface IAuthService { }          // Interfaces: IPascalCase
-public void DoSomethingAsync() { }         // Methods: PascalCase + Async suffix
-private readonly string _apiKey;           // Fields: _camelCase
-```
+// Use var for implicit typing
+var devices = GetDevices();
 
-**Async:**
-```csharp
-// ✅ Good
+// Use string interpolation
+_log.Info($"[Service] Connected to {device.Name}");
+
+// Use async/await properly
 public async Task<Device> GetDeviceAsync(string id) { }
 
-// ❌ Bad
-public async Task<Device> GetDevice(string id) { }      // Missing Async suffix
-public Device GetDevice(string id) { }                  // Async method without Task
-public async void DoSomething() { }                     // async void (except events)
-```
+// Use nullable reference types
+public Device? GetDevice(string id) { }
 
-**Dependency Injection:**
-```csharp
-public class MyViewModel : ViewModelBase
-{
-    private readonly IClipboardSyncService _clipboard;
-    
-    public MyViewModel(IClipboardSyncService clipboard)
-    {
-        _clipboard = clipboard;
-    }
-}
-```
-
-**Error Handling:**
-```csharp
-// ✅ Good - specific exceptions
-try
-{
-    await sshClient.ConnectAsync();
-}
-catch (SshConnectionException ex)
-{
-    _logger.LogError(ex, "Failed to connect to {Host}", host);
-    throw;
-}
-
-// ❌ Bad - catch all
-try
-{
-    await DoSomething();
-}
-catch (Exception)
-{
-    // Swallowing errors
-}
+// Use pattern matching
+if (device is { IsOnline: true, IpAddress: not null }) { }
 ```
 
 ### MVVM Pattern
 
-**ViewModels:**
-- Inherit from `ViewModelBase`
-- Use `[ObservableProperty]` from CommunityToolkit
-- No UI logic in ViewModels (use Commands)
-
 ```csharp
-public partial class DashboardViewModel : ViewModelBase
+public partial class MyViewModel : ViewModelBase
 {
     [ObservableProperty]
-    private string _deviceName;
+    private string _name;
     
     [RelayCommand]
-    private async Task ConnectAsync()
-    {
-        // Command logic
-    }
+    private async Task SaveAsync() { }
 }
 ```
 
-**Views:**
-- XAML only (no code-behind logic)
-- Use `{Binding}` for data
-- Use `Commands` for actions
+### Error Handling
 
----
-
-## Documentation
-
-### Updating Docs
-
-If your PR:
-- Adds a feature → Update SETUP.md
-- Changes architecture → Update DEVELOPER.md
-- Fixes a gotcha → Add to DEVELOPER.md "Common Pitfalls"
-
-**Documentation style:**
-- Clear and concise
-- Include code examples
-- Mention platform differences
-- Add troubleshooting tips
-
----
-
-## First-Time Contributors
-
-**Good places to start:**
-
-1. **Documentation** - Fix typos, clarify steps, add examples
-2. **Tests** - Add unit tests for uncovered Services
-3. **Small bugs** - Look for `good first issue` label
-4. **Platform testing** - Test on your OS, report issues
-
-**Don't be shy!** Everyone starts somewhere. Ask questions in issues or discussions.
+```csharp
+try
+{
+    await DoSomethingAsync();
+}
+catch (Exception ex)
+{
+    _log.Error($"[Service] Operation failed: {ex.Message}");
+    // Handle or rethrow
+}
+```
 
 ---
 
 ## Areas Needing Help
 
-### 🐧 Linux Audio
+### High Priority
 
-**Problem:** System audio capture requires manual PulseAudio/PipeWire routing
+1. **Linux Audio Bridge**
+   - Capture system audio via PulseAudio/PipeWire
+   - Route to `EchoLink_Sink` virtual device
+   - Currently requires manual setup
 
-**What's needed:**
-- Auto-configure PulseAudio module
-- Create `EchoLink_Sink` on startup
-- Document PipeWire equivalent
+2. **macOS Support**
+   - Audio capture/playback
+   - Remote control implementation
+   - System commands
 
-**Files:** `Services/Audio/AudioStreamingService.cs`, `EchoLink.Linux/`
+3. **iOS Client**
+   - Entirely new platform
+   - Swift/UIKit or MAUI
+   - Requires Apple developer account for testing
 
-### 🍎 macOS Support
+4. **Documentation**
+   - More examples
+   - Video tutorials
+   - Troubleshooting guides
 
-**Problem:** Limited macOS-specific implementations
+5. **Unit Tests**
+   - Service layer tests
+   - ViewModel tests
+   - Integration tests
 
-**What's needed:**
-- Audio capture (CoreAudio)
-- Remote control (CGEvent)
-- Telemetry (sysctl, IOKit)
+### Medium Priority
 
-**Files:** Create `EchoLink.macOS/` directory
+- Hotkey system implementation
+- Mesh topology visualization
+- Automated VB-Audio Cable installer
+- LAN-only fallback mode
 
-### 📱 iOS Client
+---
 
-**Problem:** Doesn't exist yet
+## Reporting Issues
 
-**What's needed:**
-- Everything! This is a greenfield implementation
-- Would need iOS-specific networking (no userspace Tailscale on iOS)
-- SwiftUI or UIKit frontend
+### Bug Reports
 
-**Note:** This is a big undertaking. Discuss approach in Discussions first.
+Include:
+- OS and version
+- .NET version (`dotnet --version`)
+- Steps to reproduce
+- Expected vs actual behavior
+- Console logs (if applicable)
+- Screenshots (if UI issue)
 
-### 🧪 Test Coverage
+### Feature Requests
 
-**Problem:** Not enough unit tests
-
-**What's needed:**
-- Tests for all Services
-- Mock Tailscale/SSH dependencies
-- Integration tests for pairing flow
-
-**Files:** `EchoLink.Tests/` (create if needed)
+Include:
+- What problem it solves
+- How it should work
+- Use case examples
+- Platform considerations
 
 ---
 
 ## Questions?
 
-**Not sure where to start?**
-- Open a [Discussion](https://github.com/uganthan2005/EchoLink/discussions)
-- Comment on an issue asking for context
-- Join the project chat (link in repo)
-
-**Found a documentation gap?**
-- Open an issue with `[docs]` label
-- Submit a PR with improvements
+- **General questions:** Use [Discussions](https://github.com/uganthan2005/EchoLink/discussions)
+- **Bug reports:** Open an [Issue](https://github.com/uganthan2005/EchoLink/issues)
+- **Chat:** Check if there's a Discord/Telegram link in Discussions
 
 ---
 
-## Code of Conduct
+## Thank You!
 
-- Be respectful and inclusive
-- Help newcomers
-- Focus on constructive feedback
-- No harassment or discrimination
+Every contribution helps, no matter how small. Whether it's fixing a typo, reporting a bug, or adding a major feature—you're making EchoLink better for everyone.
 
-**TL;DR:** Be nice. We're all here to build cool stuff together.
+<div align="center">
 
----
+**Happy coding! 🚀**
 
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License (same as the project).
-
----
-
-**Ready to start?** Pick an issue, fork the repo, and let's build something awesome! 🚀
+</div>
