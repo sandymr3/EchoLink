@@ -104,15 +104,16 @@ public partial class MacrosViewModel : ViewModelBase
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
             
-            OnlineDevices.Clear();
+            var allTargets = new List<Device>();
 
             // Include self + all online eligible peers
             var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
             if (selfDevice != null)
-                OnlineDevices.Add(selfDevice);
+                allTargets.Add(selfDevice);
                 
-            foreach (var d in devices)
-                OnlineDevices.Add(d);
+            allTargets.AddRange(devices);
+
+            UpdateDeviceCollection(OnlineDevices, allTargets);
         }
         catch (Exception ex)
         {
@@ -515,7 +516,7 @@ public partial class MacrosViewModel : ViewModelBase
 
             var settings = SettingsService.Instance.Load();
             int pairedPeers = onlinePeers.Count(p =>
-                settings.PeerUsernames.ContainsKey(p.IpAddress));
+                !string.IsNullOrEmpty(p.NodeId) && settings.ApprovedGuests.ContainsKey(p.NodeId));
             if (pairedPeers == 0)
             {
                 StatusText =

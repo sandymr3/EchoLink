@@ -58,6 +58,9 @@ public class MiddlewareClient
         
         [JsonPropertyName("hostname")]
         public string Hostname { get; set; } = "";
+
+        [JsonPropertyName("node_id")]
+        public string NodeId { get; set; } = "";
     }
 
     private class DeleteNodeRequest

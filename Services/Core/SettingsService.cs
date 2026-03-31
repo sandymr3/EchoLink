@@ -12,6 +12,7 @@ public class SettingsService
     public static SettingsService Instance => _instance.Value;
 
     private readonly string _settingsPath;
+    private readonly LoggingService _log = LoggingService.Instance;
 
     private SettingsService()
     {
@@ -29,12 +30,17 @@ public class SettingsService
             if (File.Exists(_settingsPath))
             {
                 var json = File.ReadAllText(_settingsPath);
-                return JsonSerializer.Deserialize<SettingsData>(json) ?? new SettingsData();
+                var data = JsonSerializer.Deserialize<SettingsData>(json) ?? new SettingsData();
+                
+                // Migrate legacy settings (PeerUsernames/PeerPublicKeys → ApprovedGuests)
+                MigrateLegacySettings(data);
+                
+                return data;
             }
         }
         catch (Exception ex)
         {
-            LoggingService.Instance.Error($"Failed to load settings: {ex.Message}");
+            _log.Error($"Failed to load settings: {ex.Message}");
         }
         return new SettingsData();
     }
@@ -47,13 +53,66 @@ public class SettingsService
             {
                 WriteIndented = true
             });
-            File.WriteAllText(_settingsPath, json);
-            LoggingService.Instance.Debug("Settings saved.");
+            
+            // Atomic write: write to temp file, then move
+            string tempPath = _settingsPath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, _settingsPath, overwrite: true);
+            
+            _log.Debug("Settings saved.");
         }
         catch (Exception ex)
         {
-            LoggingService.Instance.Error($"Failed to save settings: {ex.Message}");
+            _log.Error($"Failed to save settings: {ex.Message}");
         }
+    }
+    
+    /// <summary>
+    /// Migrates legacy PeerUsernames/PeerPublicKeys to new ApprovedGuests format.
+    /// This is a one-time migration for backward compatibility.
+    /// </summary>
+    private void MigrateLegacySettings(SettingsData data)
+    {
+        // Check if already migrated
+        if (data.ApprovedGuests != null && data.ApprovedGuests.Count > 0)
+            return;
+        
+        // Check if there's legacy data to migrate
+        if (data.PeerUsernames == null || data.PeerUsernames.Count == 0)
+            return;
+        
+        _log.Info($"[Settings] Migrating {data.PeerUsernames.Count} legacy peer entries to ApprovedGuests...");
+        
+        // Initialize new collections if null
+        if (data.ApprovedGuests == null)
+            data.ApprovedGuests = new Dictionary<string, ApprovedGuestInfo>();
+        
+        if (data.PeerIpAddresses == null)
+            data.PeerIpAddresses = new Dictionary<string, string>();
+        
+        foreach (var kvp in data.PeerUsernames)
+        {
+            string oldIp = kvp.Key;
+            string username = kvp.Value;
+            string publicKey = data.PeerPublicKeys?.TryGetValue(oldIp, out var key) == true ? key : "";
+            
+            // Create a temporary NodeId - will be updated when device is discovered
+            // Format: legacy_<ip> to identify migrated entries
+            string tempNodeId = $"legacy_{oldIp}";
+            
+            data.ApprovedGuests[tempNodeId] = new ApprovedGuestInfo
+            {
+                NodeId = tempNodeId,
+                Name = username,
+                PublicKey = publicKey,
+                LastKnownIp = oldIp,
+                AddedAt = DateTime.UtcNow
+            };
+            
+            data.PeerIpAddresses[tempNodeId] = oldIp;
+        }
+        
+        _log.Info($"[Settings] Migration complete. Created {data.ApprovedGuests.Count} ApprovedGuest entries.");
     }
 }
 
@@ -69,14 +128,23 @@ public class SettingsData
 
     // ── General ──
     public bool LaunchOnStartup { get; set; }
-    public bool MinimizeToTray { get; set; } = true;
     public bool ShowNotifications { get; set; } = true;
 
     // ── Hotkeys ──
     public List<HotkeyData> Hotkeys { get; set; } = [];
 
-    // ── Known SSH Pairings ──
+    // ── Approved Guests (NodeId-based trust) ──
+    // NEW: Replaces PeerUsernames/PeerPublicKeys with NodeId-based identity
+    public Dictionary<string, ApprovedGuestInfo> ApprovedGuests { get; set; } = new();
+    
+    // NEW: Runtime IP address tracking (NodeId → Current IP)
+    public Dictionary<string, string> PeerIpAddresses { get; set; } = new();
+
+    // ── LEGACY: Kept for migration only, do not use in new code ──
+    [Obsolete("Use ApprovedGuests instead")]
     public Dictionary<string, string> PeerUsernames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    
+    [Obsolete("Use ApprovedGuests instead")]
     public Dictionary<string, string> PeerPublicKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // ── Auth State ──
@@ -93,7 +161,19 @@ public class SettingsData
     public string WindowsAppShieldPinSalt { get; set; } = "";
     public string WindowsAppShieldPinHash { get; set; } = "";
     public int WindowsAppShieldPinIterations { get; set; } = 120000;
+}
 
+/// <summary>
+/// Represents an approved guest device in the trust store.
+/// Keyed by NodeId (persistent identity) instead of IP address (ephemeral).
+/// </summary>
+public class ApprovedGuestInfo
+{
+    public string NodeId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PublicKey { get; set; } = string.Empty;
+    public string LastKnownIp { get; set; } = string.Empty;
+    public DateTime AddedAt { get; set; }
 }
 
 public class HotkeyData

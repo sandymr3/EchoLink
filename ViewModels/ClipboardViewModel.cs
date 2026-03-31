@@ -77,29 +77,42 @@ public partial class ClipboardViewModel : ViewModelBase
             // Dashboard or other triggers handle the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetClipboardShareDevices();
 
-            foreach (var existing in ShareDevices)
-                existing.PropertyChanged -= OnShareDevicePropertyChanged;
-
-            ShareDevices.Clear();
-
             var selected = settings.ClipboardShareTargets
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool useTargetSelection = settings.ClipboardUseTargetSelection;
 
             // Show all eligible devices for clipboard sharing
-            foreach (var d in devices)
+            var sourceList = devices.ToList();
+            var toRemove = ShareDevices.Where(t => !sourceList.Any(s => s.IpAddress == t.IpAddress)).ToList();
+            foreach (var item in toRemove)
             {
-                var item = new ClipboardShareDevice
-                {
-                    Name = d.Name,
-                    IpAddress = d.IpAddress,
-                    IsOnline = d.IsOnline,
-                    IsSelf = d.IsSelf,
-                    IsSelected = !useTargetSelection || selected.Contains(d.IpAddress)
-                };
+                item.PropertyChanged -= OnShareDevicePropertyChanged;
+                ShareDevices.Remove(item);
+            }
 
-                item.PropertyChanged += OnShareDevicePropertyChanged;
-                ShareDevices.Add(item);
+            foreach (var d in sourceList)
+            {
+                var existing = ShareDevices.FirstOrDefault(t => t.IpAddress == d.IpAddress);
+                if (existing != null)
+                {
+                    existing.IsOnline = d.IsOnline;
+                    existing.Name = d.Name;
+                    existing.IsSelf = d.IsSelf;
+                }
+                else
+                {
+                    var item = new ClipboardShareDevice
+                    {
+                        Name = d.Name,
+                        IpAddress = d.IpAddress,
+                        IsOnline = d.IsOnline,
+                        IsSelf = d.IsSelf,
+                        IsSelected = !useTargetSelection || selected.Contains(d.IpAddress)
+                    };
+
+                    item.PropertyChanged += OnShareDevicePropertyChanged;
+                    ShareDevices.Add(item);
+                }
             }
 
             if (ShareDevices.Count == 0)

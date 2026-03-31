@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EchoLink.ViewModels"
              xmlns:m="using:EchoLink.Models"
+             xmlns:Converters="clr-namespace:EchoLink.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
@@ -250,7 +251,7 @@
                                 <DataTemplate DataType="m:Device">
                                     <Button Background="Transparent" Padding="0" Margin="0,0,0,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                                             Command="{Binding $parent[UserControl].((vm:MacrosViewModel)DataContext).SelectTargetCommand}" CommandParameter="{Binding}">
-                                        <Border Background="#141414" BorderBrush="#202020" BorderThickness="1" CornerRadius="10" Padding="14,12" Classes="DeviceItem">
+                                        <Border Background="#141414" BorderBrush="#202020" BorderThickness="1" CornerRadius="10" Padding="14,12" Classes="DeviceItem" Opacity="{Binding IsOnline, Converter={x:Static Converters:BoolToOpacityConverter.Instance}}">
                                             <Grid ColumnDefinitions="Auto,*,Auto">
                                                 <Border Grid.Column="0" Width="44" Height="44" Background="#0D1A0D" BorderBrush="#1A2F1A" BorderThickness="1" CornerRadius="10" Margin="0,0,12,0">
                                                     <TextBlock Text="{Binding DeviceIcon}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -265,7 +266,7 @@
                                                     <TextBlock FontSize="11" Foreground="#505050">
                                                         <Run Text="{Binding Os}"/>
                                                         <Run Text=" · "/>
-                                                        <Run Text="{Binding IpAddress}"/>
+                                                        <Run Text="{Binding StatusLabel}"/>
                                                     </TextBlock>
                                                 </StackPanel>
                                                 <TextBlock Grid.Column="2" Text="›" FontSize="18" Foreground="#303030" VerticalAlignment="Center"/>
@@ -277,7 +278,7 @@
                         </ItemsControl>
                     </ScrollViewer>
                     <Border Grid.Row="3" Background="#0A0A0A" BorderBrush="#1A1A1A" BorderThickness="0,1,0,0" CornerRadius="0,0,12,12" Padding="20,12">
-                        <TextBlock Text="Offline devices are automatically hidden" FontSize="11" Foreground="#303030" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Offline devices are automatically dimmed" FontSize="11" Foreground="#303030" HorizontalAlignment="Center"/>
                     </Border>
                 </Grid>
             </Border>

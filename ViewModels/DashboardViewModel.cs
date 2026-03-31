@@ -46,7 +46,8 @@ public partial class DashboardViewModel : ViewModelBase
 
     private async Task InitializeDashboardAsync()
     {
-        await TailscaleService.Instance.CleanupDuplicateNodesAsync();
+        // Duplicate cleanup disabled for safety - moving to manual prune in Settings.
+        // await TailscaleService.Instance.CleanupDuplicateNodesAsync();
         
         // Initial refresh - Dashboard controls its own refresh cycle
         await RefreshNetworkAsync();
@@ -94,11 +95,14 @@ public partial class DashboardViewModel : ViewModelBase
         try
         {
             string pubKey = await _pairingService.GetMyPublicKeyAsync();
+            var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+            
             var data = new MiddlewareClient.PairData
             {
                 IpAddress = TailscaleIp,
                 PublicKey = pubKey,
-                Hostname = Environment.MachineName
+                Hostname = selfDevice?.Name ?? Environment.MachineName,
+                NodeId = selfDevice?.NodeId ?? ""
             };
 
             var (pin, expiresIn) = await MiddlewareClient.Instance.CreatePairingPinAsync(data);
@@ -158,12 +162,18 @@ public partial class DashboardViewModel : ViewModelBase
             var hostData = await MiddlewareClient.Instance.ClaimPairingPinAsync(JoinPin);
             if (hostData != null && !string.IsNullOrEmpty(hostData.IpAddress))
             {
-                _log.Info($"[Dashboard] Claimed pairing PIN. Host IP: {hostData.IpAddress}, Hostname: {hostData.Hostname}");
-                
-                // 1. Trust host public key and save info
-                await _pairingService.TrustPublicKeyAsync(hostData.IpAddress, "echolink-mesh", hostData.PublicKey);
+                _log.Info($"[Dashboard] Claimed pairing PIN. Host IP: {hostData.IpAddress}, Hostname: {hostData.Hostname}, NodeId: {hostData.NodeId}");
 
-                // 2. Send "Pairing Complete" handshake to Host to close their PIN window
+                // Save locally to anchor trust (by NodeId)
+                if (!string.IsNullOrEmpty(hostData.NodeId))
+                {
+                    TrustStoreService.Instance.AddGuest(hostData.NodeId, hostData.PublicKey, hostData.Hostname);
+                }
+
+                // Trust host public key (by NodeId)
+                await _pairingService.TrustPublicKeyAsync(hostData.NodeId, hostData.IpAddress, "echolink-mesh", hostData.PublicKey);
+
+                // Send "Pairing Complete" handshake to Host to close their PIN window
                 await _pairingService.SendPairingCompleteAsync(hostData.IpAddress);
 
                 JoinStatusText = "Success!";
@@ -192,9 +202,6 @@ public partial class DashboardViewModel : ViewModelBase
 
         try
         {
-            // Use DeviceDiscoveryService for centralized device management
-            await DeviceDiscoveryService.Instance.RefreshAsync();
-            
             var state = await TailscaleService.Instance.GetBackendStateAsync();
             if (state == "Starting" || state == "NeedsLogin" || state == "NoState" || state == "Unknown")
             {
@@ -217,6 +224,9 @@ public partial class DashboardViewModel : ViewModelBase
                 return;
             }
 
+            // Use DeviceDiscoveryService for centralized device management after state is confirmed running
+            await DeviceDiscoveryService.Instance.RefreshAsync();
+
             // Get devices from DeviceDiscoveryService (already filtered and cached)
             var devices = DeviceDiscoveryService.Instance.CachedDevices;
             var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
@@ -230,37 +240,24 @@ public partial class DashboardViewModel : ViewModelBase
 
                 bool isGuestNode = selfDevice.Tags?.Contains("tag:guest") ?? false;
 
-                EcosystemDevices.Clear();
-                GuestDevices.Clear();
-                OtherDevices.Clear();
+                var newEcosystem = new List<Device>();
+                var newGuests = new List<Device>();
 
                 foreach (var d in devices)
                 {
-                    if (d.IsSelf || d.UserId == selfDevice.UserId)
+                    if (d.Section == DeviceSection.Ecosystem)
                     {
-                        d.Section = DeviceSection.Ecosystem;
-                        if (!isGuestNode) EcosystemDevices.Add(d);
+                        if (!isGuestNode) newEcosystem.Add(d);
                     }
-                    else if (d.Tags != null && d.Tags.Contains("tag:guest"))
+                    else if (d.Section == DeviceSection.Guests)
                     {
-                        d.Section = DeviceSection.Guests;
-                        if (!isGuestNode) GuestDevices.Add(d);
-                    }
-                    else if (d.IsPaired)
-                    {
-                        d.Section = DeviceSection.OtherDevices;
-                        OtherDevices.Add(d);
-                    }
-
-                    if (isGuestNode)
-                    {
-                        if (d.IsPaired && !d.IsSelf)
-                        {
-                            d.Section = DeviceSection.OtherDevices;
-                            OtherDevices.Add(d);
-                        }
+                        newGuests.Add(d);
                     }
                 }
+                
+                UpdateDeviceCollection(EcosystemDevices, newEcosystem);
+                UpdateDeviceCollection(GuestDevices, newGuests);
+                OtherDevices.Clear(); // Obsolete in strict mode
                 
                 _log.Info($"[Dashboard] Refreshed: {EcosystemDevices.Count} ecosystem, {GuestDevices.Count} guests, {OtherDevices.Count} other devices");
             }
@@ -300,33 +297,42 @@ public partial class DashboardViewModel : ViewModelBase
     [RelayCommand]
     private async Task RemoveDeviceAsync(Device device)
     {
-        if (device == null || string.IsNullOrWhiteSpace(device.IpAddress) || device.IsSelf) 
+        if (device == null || string.IsNullOrWhiteSpace(device.NodeId) || device.IsSelf)
             return;
 
         try
         {
-            _log.Info($"[Dashboard] Manually removing device: {device.Name} ({device.IpAddress})");
+            _log.Info($"[Dashboard] Manually removing device: {device.Name} (NodeId: {device.NodeId}, IP: {device.IpAddress})");
+            
+            // Remove from local trust store by NodeId
+            await TrustStoreService.Instance.RemoveGuestAsync(device.NodeId);
+            
+            // Delete from Headscale server (uses IP for API lookup)
             bool success = await TailscaleService.Instance.RemoveNodeAsync(device.IpAddress);
+            
             if (success)
             {
                 await RefreshNetworkAsync();
             }
         }
-        catch (Exception ex) 
-        { 
-            _log.Error($"[Dashboard] Remove error: {ex.Message}"); 
+        catch (Exception ex)
+        {
+            _log.Error($"[Dashboard] Remove error: {ex.Message}");
         }
     }
 
     [RelayCommand]
     private async Task UnpairDeviceAsync(Device device)
     {
-        if (device == null || string.IsNullOrWhiteSpace(device.IpAddress)) return;
+        if (device == null || string.IsNullOrWhiteSpace(device.NodeId)) return;
 
         try
         {
-            await _pairingService.UntrustPublicKeyAsync(device.IpAddress);
-            _log.Info($"[Dashboard] Unpaired device: {device.Name} ({device.IpAddress})");
+            // Untrust by NodeId (primary identity)
+            await _pairingService.UntrustPublicKeyAsync(device.NodeId);
+            await TrustStoreService.Instance.RemoveGuestAsync(device.NodeId);
+            
+            _log.Info($"[Dashboard] Unpaired device: {device.Name} (NodeId: {device.NodeId})");
             await RefreshNetworkAsync();
         }
         catch (Exception ex)

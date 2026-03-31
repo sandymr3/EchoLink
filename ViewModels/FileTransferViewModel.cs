@@ -11,6 +11,10 @@ public partial class FileTransferViewModel : ViewModelBase
     private readonly LoggingService _log = LoggingService.Instance;
     private readonly SftpService _sftp = new();
 
+    // ── File transfer specific state ────────────────────────────────────
+    [ObservableProperty] private bool _needsPairing;
+    [ObservableProperty] private bool _isPairing;
+
     // ── Upload state ────────────────────────────────────────────────────
     [ObservableProperty] private Device? _selectedTarget;
     [ObservableProperty] private string _selectedFileName = string.Empty;
@@ -53,6 +57,15 @@ public partial class FileTransferViewModel : ViewModelBase
         IsBrowsing = false;
         RemoteFiles.Clear();
         CurrentRemotePath = "/";
+        NeedsPairing = value != null && !IsTargetPaired(value);
+        if (value != null && !NeedsPairing)
+        {
+            StatusText = "Drop a file or click to browse";
+        }
+        else if (NeedsPairing)
+        {
+            StatusText = "Device is not paired for file transfer.";
+        }
     }
 
     // ── Device loading ───────────────────────────────────────────────────
@@ -66,9 +79,7 @@ public partial class FileTransferViewModel : ViewModelBase
             // This ensures File Transfer only shows devices from same account or explicitly paired
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
             
-            OnlineDevices.Clear();
-            foreach (var d in devices)
-                OnlineDevices.Add(d);
+            UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {
@@ -122,11 +133,15 @@ public partial class FileTransferViewModel : ViewModelBase
                 return;
             }
 
-            string username = GetTargetUsername(SelectedTarget);
-            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
+            // Get the freshest IP from DeviceDiscoveryService using NodeId
+            var freshDevice = DeviceDiscoveryService.Instance.CachedDevices
+                .FirstOrDefault(d => d.NodeId == SelectedTarget.NodeId) ?? SelectedTarget;
+            
+            string username = GetTargetUsername(freshDevice);
+            int sshPort = IsAndroid(freshDevice) ? 2222 : 22;
 
             var entries = await _sftp.ListDirectoryAsync(
-                SelectedTarget.IpAddress, username, pairingService.PrivateKeyPath,
+                freshDevice.IpAddress, username, pairingService.PrivateKeyPath,
                 path, sshPort);
 
             CurrentRemotePath = path;
@@ -190,11 +205,16 @@ public partial class FileTransferViewModel : ViewModelBase
         {
             var pairingService = new SshPairingService(TailscaleService.Instance);
             await pairingService.EnsureKeyPairAsync();
-            string username = GetTargetUsername(SelectedTarget);
-            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
+            
+            // Get the freshest IP from DeviceDiscoveryService using NodeId
+            var freshDevice = DeviceDiscoveryService.Instance.CachedDevices
+                .FirstOrDefault(d => d.NodeId == SelectedTarget.NodeId) ?? SelectedTarget;
+            
+            string username = GetTargetUsername(freshDevice);
+            int sshPort = IsAndroid(freshDevice) ? 2222 : 22;
 
             await _sftp.DownloadFileAsync(
-                SelectedTarget.IpAddress, username, pairingService.PrivateKeyPath,
+                freshDevice.IpAddress, username, pairingService.PrivateKeyPath,
                 entry.FullPath, localPath,
                 (downloaded, total) =>
                 {
@@ -285,26 +305,24 @@ public partial class FileTransferViewModel : ViewModelBase
         {
             var pairingService = new SshPairingService(TailscaleService.Instance);
             await pairingService.EnsureKeyPairAsync();
+            
+            // Get the freshest IP from DeviceDiscoveryService using NodeId
+            var freshDevice = DeviceDiscoveryService.Instance.CachedDevices
+                .FirstOrDefault(d => d.NodeId == SelectedTarget.NodeId) ?? SelectedTarget;
 
             var pairingResult = await pairingService.RequestPairingAsync(
-                SelectedTarget.IpAddress, Environment.MachineName, Environment.UserName);
+                freshDevice.IpAddress, Environment.MachineName, Environment.UserName);
 
             string targetUsername = pairingResult.TargetUsername ?? "root";
-            if (pairingResult.Accepted && !string.IsNullOrWhiteSpace(pairingResult.TargetUsername))
-            {
-                var settings = SettingsService.Instance.Load();
-                settings.PeerUsernames[SelectedTarget.IpAddress] = pairingResult.TargetUsername;
-                SettingsService.Instance.Save(settings);
-            }
 
             if (!pairingResult.Accepted)
                 _log.Warning("[SFTP] Pairing rejected or timed out.");
 
-            int sshPort = IsAndroid(SelectedTarget) ? 2222 : 22;
+            int sshPort = IsAndroid(freshDevice) ? 2222 : 22;
 
             using var fileStream = await file.OpenReadAsync();
             await _sftp.UploadStreamAsync(
-                SelectedTarget.IpAddress, targetUsername, pairingService.PrivateKeyPath,
+                freshDevice.IpAddress, targetUsername, pairingService.PrivateKeyPath,
                 fileStream, fileName, fileName,
                 (uploaded, total) =>
                 {
@@ -344,6 +362,45 @@ public partial class FileTransferViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private async Task PairDeviceAsync()
+    {
+        if (SelectedTarget is null) return;
+        IsPairing = true;
+        StatusText = $"Pairing with {SelectedTarget.Name}…";
+        try
+        {
+            var pairingService = new SshPairingService(TailscaleService.Instance);
+            await pairingService.EnsureKeyPairAsync();
+            
+            // Get the freshest IP from DeviceDiscoveryService using NodeId
+            var freshDevice = DeviceDiscoveryService.Instance.CachedDevices
+                .FirstOrDefault(d => d.NodeId == SelectedTarget.NodeId) ?? SelectedTarget;
+
+            var pairingResult = await pairingService.RequestPairingAsync(
+                freshDevice.IpAddress, Environment.MachineName, Environment.UserName);
+
+            if (pairingResult.Accepted)
+            {
+                NeedsPairing = false;
+                StatusText = "Pairing successful! You can now transfer files.";
+            }
+            else
+            {
+                StatusText = "❌ Pairing rejected or timed out.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"❌ Pairing failed: {ex.Message}";
+            _log.Error($"[SFTP] Pairing failed: {ex.Message}");
+        }
+        finally
+        {
+            IsPairing = false;
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static bool IsAndroid(Device d) =>
@@ -353,14 +410,38 @@ public partial class FileTransferViewModel : ViewModelBase
     private static string GetTargetUsername(Device d)
     {
         var settings = SettingsService.Instance.Load();
-        return settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u)
-            ? u
-            : Environment.UserName;
+        
+        // Try new ApprovedGuests format first (NodeId-based)
+        if (!string.IsNullOrEmpty(d.NodeId) && settings.ApprovedGuests.TryGetValue(d.NodeId, out var guest))
+        {
+            return !string.IsNullOrWhiteSpace(guest.Name) ? guest.Name : Environment.UserName;
+        }
+        
+        // Fallback to legacy PeerUsernames (IP-based)
+        if (settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u))
+        {
+            return u;
+        }
+        
+        return Environment.UserName;
     }
 
     private static bool IsTargetPaired(Device d)
     {
         var settings = SettingsService.Instance.Load();
-        return settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u);
+        
+        // Check new ApprovedGuests format first (NodeId-based)
+        if (!string.IsNullOrEmpty(d.NodeId) && settings.ApprovedGuests.ContainsKey(d.NodeId))
+        {
+            return true;
+        }
+        
+        // Fallback to legacy PeerUsernames (IP-based)
+        if (settings.PeerUsernames.TryGetValue(d.IpAddress, out var u) && !string.IsNullOrWhiteSpace(u))
+        {
+            return true;
+        }
+        
+        return false;
     }
 }

@@ -251,18 +251,6 @@
                                       VerticalAlignment="Center"/>
                     </Grid>
 
-                    <!-- Minimize to tray -->
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Spacing="2">
-                            <TextBlock Text="Minimize to Tray" FontSize="14" FontWeight="SemiBold"
-                                       Foreground="#FFFFFF"/>
-                            <TextBlock Text="Keep EchoLink running in the system tray when you close the window."
-                                       FontSize="12" Foreground="#B3B3B3" TextWrapping="Wrap"/>
-                        </StackPanel>
-                        <ToggleSwitch Grid.Column="1" IsChecked="{Binding MinimizeToTray}"
-                                      OnContent="ON" OffContent="OFF"
-                                      VerticalAlignment="Center"/>
-                    </Grid>
 
                     <!-- Notifications -->
                     <Grid ColumnDefinitions="*,Auto">

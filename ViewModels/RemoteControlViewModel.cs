@@ -54,17 +54,6 @@ public partial class RemoteControlViewModel : ViewModelBase
     public bool CanCancelAudioSetup => !IsAudioSetupChecking;
     public bool HasAudioSetupDialogError => !string.IsNullOrWhiteSpace(AudioSetupDialogErrorText);
 
-    public bool CanStartAudio => !IsAudioStreaming && !IsAudioConnecting;
-    public bool CanStopAudio => IsAudioStreaming || IsAudioConnecting;
-
-    public string AudioSetupDialogTitle => "System Audio Setup Required";
-    public string AudioSetupDialogMessage =>
-        "To stream high-quality system audio from Windows, EchoLink requires the free VB-Cable Virtual Audio Device. Please install it on the target PC.";
-    public string AudioSetupContinueButtonText => IsAudioSetupChecking ? "Checking..." : "Continue to audio streaming";
-    public bool CanContinueAudioSetup => !IsAudioSetupChecking;
-    public bool CanCancelAudioSetup => !IsAudioSetupChecking;
-    public bool HasAudioSetupDialogError => !string.IsNullOrWhiteSpace(AudioSetupDialogErrorText);
-
     // Android→PC Keyboard state (phone types, PC receives)
     private bool _isResetting = false;
     private string _previousText = " ";
@@ -105,11 +94,7 @@ public partial class RemoteControlViewModel : ViewModelBase
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
             
-            OnlineDevices.Clear();
-            foreach (var device in devices)
-            {
-                OnlineDevices.Add(device);
-            }
+            UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {
@@ -152,13 +137,23 @@ public partial class RemoteControlViewModel : ViewModelBase
             return;
         }
 
-        TrackpadStatus = "Connecting...";
-        bool success = await RemoteControlService.Instance.ConnectToTargetAsync(target, CancellationToken.None);
+        // Get the freshest IP from DeviceDiscoveryService using NodeId
+        var freshDevice = DeviceDiscoveryService.Instance.CachedDevices
+            .FirstOrDefault(d => d.NodeId == target.NodeId) ?? target;
         
+        if (string.IsNullOrEmpty(freshDevice.IpAddress))
+        {
+            TrackpadStatus = "No IP available for target";
+            _log.Error($"[RemoteControl] No IP available for {target.Name} (NodeId: {target.NodeId})");
+            return;
+        }
+
+        TrackpadStatus = "Connecting...";
+        bool success = await RemoteControlService.Instance.ConnectToTargetAsync(freshDevice, CancellationToken.None);
+
         TrackpadStatus = success
             ? "Connected"
             : "Failed to connect via Unified Protocol";
-
     }
 
     // ── Keyboard Diffing Engine ───────────────────────────────────────────────

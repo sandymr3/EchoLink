@@ -17,7 +17,7 @@ public sealed class AndroidAppShieldService : IAppShieldService
         return Task.CompletedTask;
     }
 
-    public Task SetupLinuxPinAsync(string pin)
+    public Task SavePinAsync(string pin)
     {
         return Task.CompletedTask;
     }

@@ -85,9 +85,7 @@ public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
             
-            OnlineDevices.Clear();
-            foreach (var d in devices)
-                OnlineDevices.Add(d);
+            UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {

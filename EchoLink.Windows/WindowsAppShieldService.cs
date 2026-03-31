@@ -66,24 +66,7 @@ public sealed class WindowsAppShieldService : IAppShieldService
         }
     }
 
-    public async Task SetupShieldAsync()
-    {
-        var first = await PromptForPinAsync("Set Up App Shield", "Create a 4-digit PIN");
-        if (!IsValidPin(first))
-        {
-            return;
-        }
-
-        var confirm = await PromptForPinAsync("Confirm PIN", "Re-enter your 4-digit PIN");
-        if (!IsValidPin(confirm) || !string.Equals(first, confirm, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        await SetupLinuxPinAsync(first!);
-    }
-
-    public Task SetupLinuxPinAsync(string pin)
+    public Task SavePinAsync(string pin)
     {
         if (!IsValidPin(pin))
         {
@@ -107,6 +90,23 @@ public sealed class WindowsAppShieldService : IAppShieldService
         SettingsService.Instance.Save(settings);
 
         return Task.CompletedTask;
+    }
+
+    public async Task SetupShieldAsync()
+    {
+        var first = await PromptForPinAsync("Set Up App Shield", "Create a 4-digit PIN");
+        if (!IsValidPin(first))
+        {
+            return;
+        }
+
+        var confirm = await PromptForPinAsync("Confirm PIN", "Re-enter your 4-digit PIN");
+        if (!IsValidPin(confirm) || !string.Equals(first, confirm, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await SavePinAsync(first!);
     }
 
     private static bool IsValidPin(string? pin)

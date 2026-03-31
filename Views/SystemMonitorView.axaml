@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EchoLink.ViewModels"
              xmlns:m="using:EchoLink.Models"
+             xmlns:Converters="clr-namespace:EchoLink.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="620"
@@ -35,10 +36,10 @@
                           PlaceholderText="Choose a device to monitor…">
                     <ComboBox.ItemTemplate>
                         <DataTemplate DataType="m:Device">
-                            <StackPanel Orientation="Horizontal" Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="10" Opacity="{Binding IsOnline, Converter={x:Static Converters:BoolToOpacityConverter.Instance}}">
                                 <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding Os}" Foreground="#707070"
+                                <TextBlock Text="{Binding StatusLabel}" Foreground="#707070"
                                            FontSize="11" VerticalAlignment="Center"/>
                             </StackPanel>
                         </DataTemplate>

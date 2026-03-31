@@ -22,6 +22,12 @@ public partial class Device : ObservableObject
     [ObservableProperty] private List<string> _tags = new();
     [ObservableProperty] private DeviceSection _section = DeviceSection.Ecosystem;
 
+    public void UpdateStatusLabel()
+    {
+        OnPropertyChanged(nameof(StatusLabel));
+        OnPropertyChanged(nameof(DeviceIcon));
+    }
+
     public string StatusLabel => IsSelf ? "This device" : (IsOnline ? "Online" : (LastSeen.HasValue ? $"Last seen: {LastSeen.Value.ToLocalTime():g}" : "Offline"));
     public string DeviceIcon => DeviceType switch
     {

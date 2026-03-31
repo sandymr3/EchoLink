@@ -122,7 +122,50 @@ namespace EchoLink.Services
             return await File.ReadAllTextAsync(PublicKeyPath);
         }
 
-        public async Task TrustPublicKeyAsync(string ip, string username, string publicKey)
+        public async Task TrustPublicKeyAsync(string nodeId, string ipAddress, string username, string publicKey)
+        {
+            if (string.IsNullOrEmpty(nodeId))
+            {
+                LoggingService.Instance.Warning($"[SshPairing] TrustPublicKeyAsync called with empty NodeId - using IP fallback");
+                // Fallback to legacy behavior if NodeId is missing
+                await TrustPublicKeyLegacyAsync(ipAddress, username, publicKey);
+                return;
+            }
+            
+            await AddToAuthorizedKeysAsync(publicKey);
+
+            if (OperatingSystem.IsAndroid())
+            {
+                TailscaleService.Instance.NativeBridge?.SetTempSshPassword(ipAddress, publicKey);
+            }
+
+            var settings = SettingsService.Instance.Load();
+            
+            // Store in new ApprovedGuests format (NodeId-based)
+            if (!settings.ApprovedGuests.ContainsKey(nodeId))
+            {
+                settings.ApprovedGuests[nodeId] = new ApprovedGuestInfo();
+            }
+            
+            var guest = settings.ApprovedGuests[nodeId];
+            guest.NodeId = nodeId;
+            guest.Name = username;
+            guest.PublicKey = publicKey;
+            guest.LastKnownIp = ipAddress;
+            guest.AddedAt = DateTime.UtcNow;
+            
+            // Also track IP address mapping
+            settings.PeerIpAddresses[nodeId] = ipAddress;
+            
+            SettingsService.Instance.Save(settings);
+            
+            LoggingService.Instance.Info($"[SshPairing] Trusted device {username} (NodeId: {nodeId}, IP: {ipAddress})");
+        }
+        
+        /// <summary>
+        /// Legacy method for backward compatibility - do not use in new code.
+        /// </summary>
+        private async Task TrustPublicKeyLegacyAsync(string ip, string username, string publicKey)
         {
             await AddToAuthorizedKeysAsync(publicKey);
 
@@ -137,21 +180,48 @@ namespace EchoLink.Services
             SettingsService.Instance.Save(settings);
         }
 
-        public async Task UntrustPublicKeyAsync(string ip)
+        public async Task UntrustPublicKeyAsync(string nodeId)
         {
-            var settings = SettingsService.Instance.Load();
-            if (settings.PeerPublicKeys.TryGetValue(ip, out var publicKey))
+            if (string.IsNullOrEmpty(nodeId))
             {
-                await RemoveFromAuthorizedKeysAsync(publicKey);
-                settings.PeerPublicKeys.Remove(ip);
+                LoggingService.Instance.Warning("[SshPairing] UntrustPublicKeyAsync called with empty NodeId - ignoring");
+                return;
             }
             
-            settings.PeerUsernames.Remove(ip);
-            SettingsService.Instance.Save(settings);
-
-            if (OperatingSystem.IsAndroid())
+            var settings = SettingsService.Instance.Load();
+            
+            // Remove from new ApprovedGuests format
+            if (settings.ApprovedGuests.ContainsKey(nodeId))
             {
-                TailscaleService.Instance.NativeBridge?.RemoveTempSshPassword(ip);
+                var guest = settings.ApprovedGuests[nodeId];
+                await RemoveFromAuthorizedKeysAsync(guest.PublicKey);
+                settings.ApprovedGuests.Remove(nodeId);
+                settings.PeerIpAddresses.Remove(nodeId);
+                SettingsService.Instance.Save(settings);
+                
+                if (OperatingSystem.IsAndroid())
+                {
+                    TailscaleService.Instance.NativeBridge?.RemoveTempSshPassword(guest.LastKnownIp);
+                }
+                
+                LoggingService.Instance.Info($"[SshPairing] Untrusted device {guest.Name} (NodeId: {nodeId})");
+                return;
+            }
+            
+            // Fallback: try legacy IP-based lookup
+            if (settings.PeerPublicKeys.TryGetValue(nodeId, out var publicKey))
+            {
+                await RemoveFromAuthorizedKeysAsync(publicKey);
+                settings.PeerPublicKeys.Remove(nodeId);
+                settings.PeerUsernames.Remove(nodeId);
+                SettingsService.Instance.Save(settings);
+                
+                if (OperatingSystem.IsAndroid())
+                {
+                    TailscaleService.Instance.NativeBridge?.RemoveTempSshPassword(nodeId);
+                }
+                
+                LoggingService.Instance.Info($"[SshPairing] Untrusted legacy device (IP: {nodeId})");
             }
         }
 
@@ -224,28 +294,43 @@ namespace EchoLink.Services
                     if (incomingPayload.StartsWith("PAIRING_COMPLETE"))
                     {
                         var handshakeParts = incomingPayload.Split("|||");
-                        if (handshakeParts.Length == 4)
+                        if (handshakeParts.Length >= 4)
                         {
                             string hHostname = handshakeParts[1];
                             string hIp = handshakeParts[2];
                             string hPubKey = handshakeParts[3];
+                            string hNodeId = handshakeParts.Length >= 5 ? handshakeParts[4] : string.Empty;
+
+                            if (!string.IsNullOrEmpty(hNodeId))
+                            {
+                                TrustStoreService.Instance.AddGuest(hNodeId, hPubKey, hHostname);
+                                await TrustPublicKeyAsync(hNodeId, hIp, "echolink-mesh", hPubKey);
+                            }
+                            else
+                            {
+                                // Fallback to legacy if NodeId not provided
+                                await TrustPublicKeyLegacyAsync(hIp, "echolink-mesh", hPubKey);
+                            }
                             
-                            await TrustPublicKeyAsync(hIp, "echolink-mesh", hPubKey);
                             LoggingService.Instance.Info($"[Pairing] Bidirectional pairing confirmed with {hHostname} ({hIp})");
+
+                            // Trigger refresh to redraw UI organically
+                            _ = DeviceDiscoveryService.Instance.RefreshAsync();
                         }
-                        
+
                         PairingCompleted?.Invoke();
                         return;
                     }
 
-                    // Payload should be: "HOSTNAME|||USERNAME|||IP_ADDRESS|||PUBLIC_KEY"
+                    // Payload should be: "HOSTNAME|||USERNAME|||IP_ADDRESS|||PUBLIC_KEY|||NODE_ID"
                     var parts = incomingPayload.Split("|||");
-                    if (parts.Length != 4) return;
+                    if (parts.Length < 4) return;
 
                     string hostname = parts[0];
                     string remoteUsername = parts[1];
                     string remoteIp = parts[2];
                     string publicKey = parts[3].Trim();
+                    string remoteNodeId = parts.Length >= 5 ? parts[4] : string.Empty;
 
                     if (!publicKey.StartsWith("ssh-ed25519") && !publicKey.StartsWith("ssh-rsa"))
                     {
@@ -266,11 +351,25 @@ namespace EchoLink.Services
 
                     if (accepted)
                     {
-                        await TrustPublicKeyAsync(remoteIp, remoteUsername, publicKey);
-                        
+                        if (!string.IsNullOrEmpty(remoteNodeId))
+                        {
+                            TrustStoreService.Instance.AddGuest(remoteNodeId, publicKey, hostname);
+                            await TrustPublicKeyAsync(remoteNodeId, remoteIp, remoteUsername, publicKey);
+                        }
+                        else
+                        {
+                            // Fallback to legacy if NodeId not provided
+                            await TrustPublicKeyLegacyAsync(remoteIp, remoteUsername, publicKey);
+                        }
+
                         // Reply with our OS username and Public Key so the sender can also trust us
                         string myPubKey = await GetMyPublicKeyAsync();
-                        await writer.WriteLineAsync($"ACCEPTED|||{Environment.UserName}|||{myPubKey}");
+                        var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+                        string myNodeId = selfDevice?.NodeId ?? "Unknown";
+                        await writer.WriteLineAsync($"ACCEPTED|||{Environment.UserName}|||{myPubKey}|||{myNodeId}");
+
+                        // Refresh to reflect new guest
+                        _ = DeviceDiscoveryService.Instance.RefreshAsync();
                     }
                     else
                     {
@@ -304,6 +403,9 @@ namespace EchoLink.Services
         {
             string myPubKey = await GetMyPublicKeyAsync();
             string myIp = await _tailscaleService.GetTailscaleIpAsync() ?? "Unknown";
+            
+            var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+            string myNodeId = selfDevice?.NodeId ?? "Unknown";
 
             try
             {
@@ -322,19 +424,31 @@ namespace EchoLink.Services
                 using var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
                 using var reader = new StreamReader(stream, Encoding.UTF8);
 
-                await writer.WriteLineAsync($"{myHostname}|||{myUsername}|||{myIp}|||{myPubKey}");
+                await writer.WriteLineAsync($"{myHostname}|||{myUsername}|||{myIp}|||{myPubKey}|||{myNodeId}");
 
                 string? response = await reader.ReadLineAsync();
 
                 if (response != null && response.StartsWith("ACCEPTED|||"))
                 {
                     var responseParts = response.Split("|||");
-                    if (responseParts.Length == 3)
+                    if (responseParts.Length >= 3)
                     {
                         string targetUser = responseParts[1];
                         string targetPubKey = responseParts[2];
+                        string targetNodeId = responseParts.Length >= 4 ? responseParts[3] : string.Empty;
 
-                        await TrustPublicKeyAsync(targetIp, targetUser, targetPubKey);
+                        if (!string.IsNullOrEmpty(targetNodeId))
+                        {
+                            TrustStoreService.Instance.AddGuest(targetNodeId, targetPubKey, targetUser);
+                            await TrustPublicKeyAsync(targetNodeId, targetIp, targetUser, targetPubKey);
+                        }
+                        else
+                        {
+                            // Fallback to legacy if NodeId not provided
+                            await TrustPublicKeyLegacyAsync(targetIp, targetUser, targetPubKey);
+                        }
+                        
+                        _ = DeviceDiscoveryService.Instance.RefreshAsync();
                         return (true, targetUser);
                     }
                 }
@@ -366,7 +480,10 @@ namespace EchoLink.Services
                     
                     string myIp = await _tailscaleService.GetTailscaleIpAsync(cts.Token) ?? "Unknown";
                     string myPubKey = await GetMyPublicKeyAsync();
-                    await writer.WriteLineAsync($"PAIRING_COMPLETE|||{Environment.MachineName}|||{myIp}|||{myPubKey}");
+                    var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
+                    string myNodeId = selfDevice?.NodeId ?? "Unknown";
+                    
+                    await writer.WriteLineAsync($"PAIRING_COMPLETE|||{Environment.MachineName}|||{myIp}|||{myPubKey}|||{myNodeId}");
                 }
             }
             catch { /* Ignore handshake errors */ }

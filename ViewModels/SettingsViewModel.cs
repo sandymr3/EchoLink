@@ -25,7 +25,6 @@ public partial class SettingsViewModel : ViewModelBase
 
     // ── General ─────────────────────────────────────────────────────────
     [ObservableProperty] private bool _launchOnStartup;
-    [ObservableProperty] private bool _minimizeToTray = true;
     [ObservableProperty] private bool _showNotifications = true;
 
     // ── App Shield PIN ──────────────────────────────────────────────────
@@ -63,7 +62,6 @@ public partial class SettingsViewModel : ViewModelBase
         ClipboardHistoryLimit = data.ClipboardHistoryLimit;
 
         LaunchOnStartup = data.LaunchOnStartup;
-        MinimizeToTray = data.MinimizeToTray;
         ShowNotifications = data.ShowNotifications;
 
         // Build hotkey list from saved data, falling back to defaults
@@ -118,7 +116,6 @@ public partial class SettingsViewModel : ViewModelBase
             ClipboardShareTargets = selectedTargets,
 
             LaunchOnStartup = LaunchOnStartup,
-            MinimizeToTray = MinimizeToTray,
             ShowNotifications = ShowNotifications,
 
             Hotkeys = Hotkeys.Select(h => new HotkeyData
@@ -169,7 +166,6 @@ public partial class SettingsViewModel : ViewModelBase
         _updatingClipboardSelection = false;
 
         LaunchOnStartup = false;
-        MinimizeToTray = true;
         ShowNotifications = true;
 
         Hotkeys.Clear();
@@ -328,25 +324,39 @@ public partial class SettingsViewModel : ViewModelBase
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             bool useTargetSelection = data.ClipboardUseTargetSelection;
 
-            foreach (var item in ClipboardShareDevices)
-                item.PropertyChanged -= OnClipboardShareDevicePropertyChanged;
+            var devices = DeviceDiscoveryService.Instance.GetClipboardShareDevices();
+            var sourceList = devices.Where(d => !d.IsSelf && !string.IsNullOrWhiteSpace(d.IpAddress)).ToList();
 
-            ClipboardShareDevices.Clear();
-
-            var (_, devices) = await TailscaleService.Instance.GetNetworkStatusAsync();
-            foreach (var d in devices.Where(d => !d.IsSelf && !string.IsNullOrWhiteSpace(d.IpAddress)))
+            var toRemove = ClipboardShareDevices.Where(t => !sourceList.Any(s => s.IpAddress == t.IpAddress)).ToList();
+            foreach (var item in toRemove)
             {
-                var item = new ClipboardShareDevice
-                {
-                    Name = d.Name,
-                    IpAddress = d.IpAddress,
-                    IsOnline = d.IsOnline,
-                    IsSelf = d.IsSelf,
-                    IsSelected = !useTargetSelection || selected.Contains(d.IpAddress)
-                };
+                item.PropertyChanged -= OnClipboardShareDevicePropertyChanged;
+                ClipboardShareDevices.Remove(item);
+            }
 
-                item.PropertyChanged += OnClipboardShareDevicePropertyChanged;
-                ClipboardShareDevices.Add(item);
+            foreach (var d in sourceList)
+            {
+                var existing = ClipboardShareDevices.FirstOrDefault(t => t.IpAddress == d.IpAddress);
+                if (existing != null)
+                {
+                    existing.IsOnline = d.IsOnline;
+                    existing.Name = d.Name;
+                    existing.IsSelf = d.IsSelf;
+                }
+                else
+                {
+                    var item = new ClipboardShareDevice
+                    {
+                        Name = d.Name,
+                        IpAddress = d.IpAddress,
+                        IsOnline = d.IsOnline,
+                        IsSelf = d.IsSelf,
+                        IsSelected = !useTargetSelection || selected.Contains(d.IpAddress)
+                    };
+
+                    item.PropertyChanged += OnClipboardShareDevicePropertyChanged;
+                    ClipboardShareDevices.Add(item);
+                }
             }
         }
         catch (Exception ex)

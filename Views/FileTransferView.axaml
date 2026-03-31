@@ -32,6 +32,7 @@
                         <Button Grid.Column="2" Content="📂 Browse Remote"
                                 Command="{Binding BrowseRemoteCommand}"
                                 IsEnabled="{Binding SelectedTarget, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                IsVisible="{Binding !NeedsPairing}"
                                 Background="#1A1A1A" Foreground="#00E5FF"
                                 BorderBrush="#2D2D2D" BorderThickness="1"
                                 CornerRadius="6" Padding="10,4" FontSize="12"/>
@@ -42,12 +43,12 @@
                               PlaceholderText="Choose a peer device…">
                         <ComboBox.ItemTemplate>
                             <DataTemplate DataType="m:Device">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="10" 
+                                            Opacity="{Binding IsOnline, Converter={x:Static ObjectConverters.IsNotNull}}">
                                     <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
                                     <TextBlock Text="{Binding Name}" Foreground="#FFFFFF"/>
-                                    <TextBlock Text="{Binding IpAddress}"
+                                    <TextBlock Text="{Binding StatusLabel}"
                                                Foreground="#B3B3B3" FontSize="11"
-                                               FontFamily="Consolas, monospace"
                                                VerticalAlignment="Center"/>
                                 </StackPanel>
                             </DataTemplate>
@@ -56,8 +57,29 @@
                 </StackPanel>
             </Border>
 
-            <!-- ── Remote File Browser ─────────────────────────────────── -->
-            <Border Classes="Card"
+            <!-- ── Pairing Required UI ─────────────────────────────────── -->
+            <Border Classes="Card" IsVisible="{Binding NeedsPairing}">
+                <StackPanel Spacing="16" HorizontalAlignment="Center" Margin="0,30,0,30">
+                    <TextBlock Text="🔒 Pairing Required" 
+                               FontSize="20" FontWeight="SemiBold" 
+                               HorizontalAlignment="Center" Foreground="#FFFFFF"/>
+                    <TextBlock Text="This device needs to be securely paired before you can transfer files." 
+                               FontSize="14" Foreground="#B3B3B3" 
+                               HorizontalAlignment="Center" TextWrapping="Wrap"/>
+                    
+                    <Button Classes="Primary" 
+                            Content="Pair Device" 
+                            Command="{Binding PairDeviceCommand}" 
+                            HorizontalAlignment="Center" 
+                            Padding="24,10"
+                            IsEnabled="{Binding !IsPairing}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- ── Main Transfer UI (Hidden if pairing needed) ─────────── -->
+            <StackPanel Spacing="20" IsVisible="{Binding !NeedsPairing}">
+                <!-- ── Remote File Browser ─────────────────────────────────── -->
+                <Border Classes="Card"
                     IsVisible="{Binding IsBrowsing}"
                     Padding="0">
                 <StackPanel>
@@ -235,6 +257,7 @@
                             HorizontalAlignment="Right"/>
                 </StackPanel>
             </Border>
+            </StackPanel>
 
             <!-- ── Status (idle) ───────────────────────────────────────── -->
             <TextBlock Text="{Binding StatusText}"

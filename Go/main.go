@@ -165,10 +165,26 @@ func GetBackendState() *C.char {
 //export GetTailscaleIp
 func GetTailscaleIp() *C.char {
 	status, err := getStatus()
-	if err != nil || status == nil || len(status.TailscaleIPs) == 0 {
+	if err != nil || status == nil {
 		return C.CString("")
 	}
-	return C.CString(status.TailscaleIPs[0].String())
+	
+	if len(status.TailscaleIPs) > 0 {
+		return C.CString(status.TailscaleIPs[0].String())
+	}
+	
+	if status.Self != nil && len(status.Self.TailscaleIPs) > 0 {
+		return C.CString(status.Self.TailscaleIPs[0].String())
+	}
+
+	return C.CString("")
+}
+
+//export FreeCString
+func FreeCString(ptr *C.char) {
+	if ptr != nil {
+		C.free(unsafe.Pointer(ptr))
+	}
 }
 
 //export GetLoginUrl

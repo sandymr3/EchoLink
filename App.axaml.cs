@@ -70,20 +70,21 @@ public partial class App : Application
             loadingWindow.Show();
 
             // Hook cleanup
-            desktop.Exit += async (_, _) =>
+            desktop.Exit += (_, _) =>
             {
-                await ClipboardSyncService.Instance.StopAsync();
-                await AudioStreamingService.Instance.StopAllAsync();
+                // Run cleanup synchronously so the process doesn't exit prematurely
+                Task.Run(async () =>
+                {
+                    await ClipboardSyncService.Instance.StopAsync();
+                    await AudioStreamingService.Instance.StopAllAsync();
+                    if (TailscaleService.Instance.IsEphemeralSession)
+                    {
+                        await TailscaleService.Instance.LogoutAsync();
+                    }
+                }).Wait(TimeSpan.FromSeconds(3));
+
                 EchoLink.Services.UnifiedProtocol.UnifiedProtocolService.Instance.StopServer();
-                
-                if (TailscaleService.Instance.IsEphemeralSession)
-                {
-                    await TailscaleService.Instance.LogoutAsync();
-                }
-                else
-                {
-                    TailscaleService.Instance.StopDaemon();
-                }
+                TailscaleService.Instance.StopDaemon();
             };
 
             // Check auth state asynchronously, then show the right window

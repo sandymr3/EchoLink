@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
+using EchoLink.Models;
 
 namespace EchoLink.Services;
 
@@ -328,6 +329,7 @@ public class TailscaleService
             try
             {
                 _daemonProcess.Kill(entireProcessTree: true);
+                _daemonProcess.WaitForExit(3000); // Wait up to 3s to ensure it's completely gone
                 _daemonProcess.Dispose();
             }
             catch (Exception ex)
@@ -335,6 +337,9 @@ public class TailscaleService
                 _log.Warning($"[Tailscale] Error stopping daemon: {ex.Message}");
             }
         }
+        
+        // Double check for any orphaned children just in case Kill(true) missed them during a crash
+        KillExistingDaemons(); 
     }
 
     private string CliPath()
@@ -518,33 +523,34 @@ public class TailscaleService
                         // Second pass: set IsPaired for all devices
                         foreach (var peer in peerDevices)
                         {
-                            // Device is paired if: it's self, OR explicitly paired, OR same account (matching UserId)
+                            // Device is paired if: it's self, OR explicitly paired (in ApprovedGuests), OR same account (matching UserId)
                             peer.IsPaired = peer.IsSelf ||
-                                           settingsData.PeerUsernames.ContainsKey(peer.IpAddress) ||
+                                           (settingsData.ApprovedGuests != null && settingsData.ApprovedGuests.Values.Any(g => g.LastKnownIp == peer.IpAddress)) ||
                                            (!string.IsNullOrEmpty(peer.UserId) && !string.IsNullOrEmpty(androidSelfUserId) && peer.UserId == androidSelfUserId);
                             androidDevices.Add(peer);
                         }
-                        
-                        // Inject paired devices from PeerUsernames that aren't in the Tailscale peer list yet
-                        // This ensures newly paired devices appear immediately even before Tailscale discovers them
-                        // Check by IP address to avoid duplicating devices that Tailscale has already discovered
-                        var existingIps = new HashSet<string>(peerDevices.Select(d => d.IpAddress), StringComparer.OrdinalIgnoreCase);
-                        foreach (var pairedIp in settingsData.PeerUsernames.Keys)
+
+                        // Inject offline approved guests (phantoms) that aren't in the Tailscale peer list yet
+                        // This ensures approved guests remain visible even when offline
+                        var discoveredNodeIds = new HashSet<string>(peerDevices.Select(d => d.NodeId), StringComparer.OrdinalIgnoreCase);
+                        foreach (var guest in settingsData.ApprovedGuests.Values)
                         {
-                            if (!existingIps.Contains(pairedIp))
+                            if (!discoveredNodeIds.Contains(guest.NodeId) && !string.IsNullOrEmpty(guest.LastKnownIp))
                             {
-                                _log.Info($"[Tailscale] Injecting paired device {pairedIp} from settings (not yet visible in Tailscale)");
+                                _log.Info($"[Tailscale] Injecting offline approved guest: {guest.Name} (NodeId: {guest.NodeId}, IP: {guest.LastKnownIp})");
                                 androidDevices.Add(new Models.Device
                                 {
-                                    Name = "Connecting...", // Temporary name until Tailscale discovers real device
-                                    IpAddress = pairedIp,
-                                    IsOnline = false, // Not yet visible in Tailscale
+                                    NodeId = guest.NodeId,
+                                    Name = guest.Name,
+                                    IpAddress = guest.LastKnownIp,
+                                    IsOnline = false,
                                     IsPaired = true,
                                     IsSelf = false,
-                                    UserId = "", // Unknown until we see it in Tailscale
+                                    UserId = "",
                                     DeviceType = "Desktop",
                                     Os = "",
-                                    LastSeen = DateTime.UtcNow
+                                    LastSeen = null,
+                                    Section = DeviceSection.Guests
                                 });
                             }
                         }
@@ -596,26 +602,27 @@ public class TailscaleService
                     devices.Add(ParseDevice(peer.Value, isSelf: false, settingsData, selfUserId));
             }
             
-            // Inject paired devices from PeerUsernames that aren't in Tailscale's peer list yet
-            // This ensures newly paired devices (especially from different accounts) appear immediately
-            // Check by IP address to avoid duplicating devices that Tailscale has already discovered
-            var existingIpsDesktop = new HashSet<string>(devices.Select(d => d.IpAddress), StringComparer.OrdinalIgnoreCase);
-            foreach (var pairedIp in settingsData.PeerUsernames.Keys)
+            // Inject offline approved guests (phantoms) that aren't in Tailscale's peer list yet
+            // This ensures approved guests remain visible even when offline
+            var discoveredNodeIdsDesktop = new HashSet<string>(devices.Select(d => d.NodeId), StringComparer.OrdinalIgnoreCase);
+            foreach (var guest in settingsData.ApprovedGuests.Values)
             {
-                if (!existingIpsDesktop.Contains(pairedIp))
+                if (!discoveredNodeIdsDesktop.Contains(guest.NodeId) && !string.IsNullOrEmpty(guest.LastKnownIp))
                 {
-                    _log.Info($"[Tailscale] Injecting paired device {pairedIp} from settings (not yet visible in Tailscale)");
+                    _log.Info($"[Tailscale] Injecting offline approved guest: {guest.Name} (NodeId: {guest.NodeId}, IP: {guest.LastKnownIp})");
                     devices.Add(new Models.Device
                     {
-                        Name = "Connecting...", // Temporary name until Tailscale discovers real device
-                        IpAddress = pairedIp,
-                        IsOnline = false, // Not yet visible in Tailscale
+                        NodeId = guest.NodeId,
+                        Name = guest.Name,
+                        IpAddress = guest.LastKnownIp,
+                        IsOnline = false,
                         IsPaired = true,
                         IsSelf = false,
-                        UserId = "", // Unknown until we see it in Tailscale
+                        UserId = "",
                         DeviceType = "Desktop",
                         Os = "",
-                        LastSeen = DateTime.UtcNow
+                        LastSeen = null,
+                        Section = DeviceSection.Guests
                     });
                 }
             }
@@ -633,17 +640,49 @@ public class TailscaleService
     private System.Collections.Generic.List<Models.Device> DeduplicateDevices(System.Collections.Generic.List<Models.Device> devices)
     {
         var cleanDevices = new System.Collections.Generic.List<Models.Device>();
+        
+        // Add self device first
         var selfDevice = devices.FirstOrDefault(d => d.IsSelf);
-        if (selfDevice != null) cleanDevices.Add(selfDevice);
-
-        var groupedPeers = devices.Where(d => !d.IsSelf && !string.IsNullOrEmpty(d.Name)).GroupBy(d => d.Name);
-        foreach (var group in groupedPeers)
+        if (selfDevice != null)
+            cleanDevices.Add(selfDevice);
+        
+        // Primary: Group by NodeId (the TRUE unique identifier)
+        var groupedByNodeId = devices
+            .Where(d => !d.IsSelf && !string.IsNullOrEmpty(d.NodeId))
+            .GroupBy(d => d.NodeId);
+        
+        foreach (var group in groupedByNodeId)
         {
-            var mostRecent = group.OrderByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value : DateTime.MinValue).First();
+            // Keep the most recently seen/online device
+            var mostRecent = group
+                .OrderByDescending(d => d.IsOnline)
+                .ThenByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value.ToUniversalTime() : DateTime.MinValue)
+                .First();
             cleanDevices.Add(mostRecent);
         }
         
+        // Fallback: Group by Name+UserId for devices without NodeId (should be rare)
+        var devicesWithoutNodeId = devices
+            .Where(d => !d.IsSelf && string.IsNullOrEmpty(d.NodeId) && !string.IsNullOrEmpty(d.Name));
+        
+        var groupedByNameAndUser = devicesWithoutNodeId
+            .GroupBy(d => new {
+                Name = d.Name?.Trim().ToLowerInvariant() ?? "",
+                UserId = d.UserId?.Trim().ToLowerInvariant() ?? ""
+            });
+        
+        foreach (var group in groupedByNameAndUser)
+        {
+            var mostRecent = group
+                .OrderByDescending(d => d.IsOnline)
+                .ThenByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value.ToUniversalTime() : DateTime.MinValue)
+                .First();
+            cleanDevices.Add(mostRecent);
+        }
+        
+        // Add any remaining devices without names
         cleanDevices.AddRange(devices.Where(d => !d.IsSelf && string.IsNullOrEmpty(d.Name)));
+        
         return cleanDevices;
     }
 
@@ -696,9 +735,9 @@ public class TailscaleService
             lastSeen = dt;
         }
 
-        // Device is paired if: it's self, OR explicitly paired (in PeerUsernames), OR same account (matching UserId)
-        bool isPaired = isSelf || 
-                       (settingsData.PeerUsernames != null && settingsData.PeerUsernames.ContainsKey(ip)) ||
+        // Device is paired if: it's self, OR explicitly paired (in ApprovedGuests), OR same account (matching UserId)
+        bool isPaired = isSelf ||
+                       (settingsData.ApprovedGuests != null && settingsData.ApprovedGuests.Values.Any(g => g.LastKnownIp == ip)) ||
                        (!string.IsNullOrEmpty(userId) && !string.IsNullOrEmpty(selfUserId) && userId == selfUserId);
 
         return new Models.Device
@@ -745,10 +784,10 @@ public class TailscaleService
             foreach (var group in groupedDevices)
             {
                 // Find the most recently seen device
-                var mostRecent = group.OrderByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value : DateTime.MinValue).First();
-                
-                _log.Info($"[Tailscale] Found {group.Count()} devices named '{group.Key}'. Keeping IP: {mostRecent.IpAddress} (LastSeen: {mostRecent.LastSeen})");
-
+                var mostRecent = group
+                    .OrderByDescending(d => d.IsOnline)
+                    .ThenByDescending(d => d.LastSeen.HasValue ? d.LastSeen.Value.ToUniversalTime() : DateTime.MinValue)
+                    .First();
                 // Remove all others
                 foreach (var device in group.Where(d => d.IpAddress != mostRecent.IpAddress))
                 {

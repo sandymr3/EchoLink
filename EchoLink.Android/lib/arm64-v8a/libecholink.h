@@ -97,6 +97,7 @@ extern "C" {
 extern GoInt StartEchoLinkNode(char* configDir, char* authKey, char* hostname, char* localIp, int isEphemeral);
 extern char* GetBackendState(void);
 extern char* GetTailscaleIp(void);
+extern void FreeCString(char* ptr);
 extern char* GetLoginUrl(void);
 extern char* GetLastErrorMsg(void);
 extern void LogoutNode(void);

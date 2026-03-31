@@ -19,6 +19,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
             Console.WriteLine("[NativeBridge-UltraDebug] Attempting to call NativeMethods.GetBackendState()...");
             var statePtr = NativeMethods.GetBackendState();
             var state = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(statePtr) ?? "Unknown";
+            if (statePtr != IntPtr.Zero)
+            {
+                NativeMethods.FreeCString(statePtr);
+            }
             Console.WriteLine($"[NativeBridge-UltraDebug] Call successful! Initial State: {state}");
         }
         catch (DllNotFoundException ex)
@@ -39,7 +43,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
         try
         {
             IntPtr ptr = NativeMethods.GetBackendState();
-            return ptr == IntPtr.Zero ? "Stopped" : System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr) ?? "Stopped";
+            if (ptr == IntPtr.Zero) return "Stopped";
+            var result = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr) ?? "Stopped";
+            NativeMethods.FreeCString(ptr);
+            return result;
         }
         catch (Exception ex)
         {
@@ -54,7 +61,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
         try
         {
             IntPtr ptr = NativeMethods.GetTailscaleIp();
-            return ptr == IntPtr.Zero ? null : System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            if (ptr == IntPtr.Zero) return null;
+            var result = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            NativeMethods.FreeCString(ptr);
+            return result;
         }
         catch (Exception ex)
         {
@@ -69,7 +79,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
         try
         {
             IntPtr ptr = NativeMethods.GetLoginUrl();
-            return ptr == IntPtr.Zero ? null : System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            if (ptr == IntPtr.Zero) return null;
+            var result = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            NativeMethods.FreeCString(ptr);
+            return result;
         }
         catch (Exception ex)
         {
@@ -85,7 +98,9 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
         {
             IntPtr ptr = NativeMethods.GetPeerListJson();
             if (ptr == IntPtr.Zero) return "[]";
-            return System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr) ?? "[]";
+            var result = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr) ?? "[]";
+            NativeMethods.FreeCString(ptr);
+            return result;
         }
         catch (Exception ex)
         {
@@ -100,7 +115,10 @@ public class AndroidNativeMeshBridge : INativeMeshBridge
         try
         {
             IntPtr ptr = NativeMethods.GetLastErrorMsg();
-            return ptr == IntPtr.Zero ? null : System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            if (ptr == IntPtr.Zero) return null;
+            var result = System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
+            NativeMethods.FreeCString(ptr);
+            return result;
         }
         catch (Exception ex)
         {

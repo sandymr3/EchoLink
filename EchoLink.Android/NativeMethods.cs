@@ -13,13 +13,12 @@ public static class NativeMethods
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern void StopEchoLinkNode();
 
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr GetBackendState();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr GetTailscaleIp();
-    
+
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr GetLoginUrl();
 
@@ -28,6 +27,9 @@ public static class NativeMethods
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr GetLastErrorMsg();
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern void FreeCString(IntPtr ptr);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
     public static extern void SetAudioTargetHost(string host);

@@ -114,7 +114,7 @@ public class RemoteControlService
                 return Task.CompletedTask;
             });
 
-        // PC→Android Keyboard Routing: Register handler for KeyboardEvent (0x0E)
+        // PC→Android Keyboard Routing: Register handler for KeyboardEvent (0x11)
         // This routes PC keystrokes to Android's EchoLinkImeService
         UnifiedProtocolService.Instance.RegisterHandler(
             UnifiedMessageType.KeyboardEvent,

@@ -99,6 +99,7 @@ public class KeyboardControlService
         return vkCode switch
         {
             8 => KeyCode.VcBackspace,
+            9 => KeyCode.VcTab,
             13 => KeyCode.VcEnter,
             27 => KeyCode.VcEscape,
             37 => KeyCode.VcLeft,

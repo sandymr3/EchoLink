@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EchoLink.ViewModels"
              xmlns:m="using:EchoLink.Models"
+             xmlns:Converters="clr-namespace:EchoLink.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="680"
@@ -39,10 +40,10 @@
                                   PlaceholderText="Choose a peer to control…">
                             <ComboBox.ItemTemplate>
                                 <DataTemplate DataType="m:Device">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="10" Opacity="{Binding IsOnline, Converter={x:Static Converters:BoolToOpacityConverter.Instance}}">
                                         <TextBlock Text="{Binding DeviceIcon}" FontSize="16"/>
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock Text="{Binding IpAddress}" Foreground="#B3B3B3" FontSize="12" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding StatusLabel}" Foreground="#B3B3B3" FontSize="12" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </DataTemplate>
                             </ComboBox.ItemTemplate>
@@ -252,131 +253,7 @@
                                    IsHitTestVisible="False"/>
                     </Border>
                 </StackPanel>
-                <!-- Audio setup dialog overlay -->
-        <Grid Background="#B2000000"
-              IsVisible="{Binding IsAudioSetupDialogVisible}"
-              ZIndex="100">
-            <Border Classes="Card"
-                    Width="520"
-                    MaxWidth="520"
-                    Padding="20"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="{Binding AudioSetupDialogTitle}"
-                               FontSize="18"
-                               FontWeight="Bold"
-                               Foreground="#FFFFFF"/>
-
-                    <TextBlock Text="{Binding AudioSetupDialogMessage}"
-                               TextWrapping="Wrap"
-                               FontSize="13"
-                               Foreground="#B3B3B3"/>
-
-                        <Border IsVisible="{Binding HasAudioSetupDialogError}"
-                            Background="#2A1A1A"
-                            BorderBrush="#7A3030"
-                            BorderThickness="1"
-                            CornerRadius="6"
-                            Padding="10,8">
-                        <TextBlock Text="{Binding AudioSetupDialogErrorText}"
-                               TextWrapping="Wrap"
-                               FontSize="12"
-                               Foreground="#FF8A80"/>
-                        </Border>
-
-                    <Button Content="Open VB-Cable Download"
-                            Command="{Binding OpenAudioSetupLinkCommand}"
-                            HorizontalAlignment="Left"
-                            Background="#1A2A1A"
-                            Foreground="#00E676"
-                            Padding="14,8"
-                            CornerRadius="6"/>
-
-                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" HorizontalAlignment="Right">
-                        <Button Grid.Column="0"
-                            Content="Cancel"
-                            Command="{Binding CancelAudioSetupCommand}"
-                            IsEnabled="{Binding CanCancelAudioSetup}"
-                            Background="#2A2A2A"
-                            Foreground="#D0D0D0"
-                            Padding="16,8"
-                            CornerRadius="6"/>
-
-                        <Button Grid.Column="1"
-                            Content="{Binding AudioSetupContinueButtonText}"
-                            Command="{Binding ContinueAudioStreamingCommand}"
-                            IsEnabled="{Binding CanContinueAudioSetup}"
-                            Classes="Primary"
-                            Padding="16,8"/>
-                        </Grid>
-                </StackPanel>
-            </Border>
-        </Grid>
-
-    </StackPanel>
+            </StackPanel>
         </Border>
-        <!-- Audio setup dialog overlay -->
-        <Grid Background="#B2000000"
-              IsVisible="{Binding IsAudioSetupDialogVisible}"
-              ZIndex="100">
-            <Border Classes="Card"
-                    Width="520"
-                    MaxWidth="520"
-                    Padding="20"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="{Binding AudioSetupDialogTitle}"
-                               FontSize="18"
-                               FontWeight="Bold"
-                               Foreground="#FFFFFF"/>
-
-                    <TextBlock Text="{Binding AudioSetupDialogMessage}"
-                               TextWrapping="Wrap"
-                               FontSize="13"
-                               Foreground="#B3B3B3"/>
-
-                        <Border IsVisible="{Binding HasAudioSetupDialogError}"
-                            Background="#2A1A1A"
-                            BorderBrush="#7A3030"
-                            BorderThickness="1"
-                            CornerRadius="6"
-                            Padding="10,8">
-                        <TextBlock Text="{Binding AudioSetupDialogErrorText}"
-                               TextWrapping="Wrap"
-                               FontSize="12"
-                               Foreground="#FF8A80"/>
-                        </Border>
-
-                    <Button Content="Open VB-Cable Download"
-                            Command="{Binding OpenAudioSetupLinkCommand}"
-                            HorizontalAlignment="Left"
-                            Background="#1A2A1A"
-                            Foreground="#00E676"
-                            Padding="14,8"
-                            CornerRadius="6"/>
-
-                        <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="10" HorizontalAlignment="Right">
-                        <Button Grid.Column="0"
-                            Content="Cancel"
-                            Command="{Binding CancelAudioSetupCommand}"
-                            IsEnabled="{Binding CanCancelAudioSetup}"
-                            Background="#2A2A2A"
-                            Foreground="#D0D0D0"
-                            Padding="16,8"
-                            CornerRadius="6"/>
-
-                        <Button Grid.Column="1"
-                            Content="{Binding AudioSetupContinueButtonText}"
-                            Command="{Binding ContinueAudioStreamingCommand}"
-                            IsEnabled="{Binding CanContinueAudioSetup}"
-                            Classes="Primary"
-                            Padding="16,8"/>
-                        </Grid>
-                </StackPanel>
-            </Border>
-        </Grid>
-
     </Grid>
 </UserControl>

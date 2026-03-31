@@ -288,19 +288,6 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    [RelayCommand]
-    private void MinimizeToTray()
-    {
-        // Hide the main window
-        if (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            if (desktop.MainWindow is Window window)
-            {
-                window.Hide();
-            }
-        }
-    }
-
     private void Navigate(ViewModelBase vm, string title)
     {
         if (IsAppLocked || !_isSetupInitialized)
