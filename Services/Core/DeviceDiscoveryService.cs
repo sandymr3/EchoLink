@@ -177,7 +177,7 @@ public class DeviceDiscoveryService
                     device.Section = DeviceSection.Guests;
                     device.IsPaired = true; // Explicitly paired guest
                     processedDevices.Add(device);
-                    
+
                     // Update LastKnownIp for approved guests if IP changed
                     UpdateGuestLastKnownIp(device.NodeId, device.IpAddress);
                 }
@@ -195,6 +195,9 @@ public class DeviceDiscoveryService
 
                 // Capture self user ID for consistent filtering
                 _selfUserId = selfUserId;
+
+                // Cleanup legacy guest entries (run on every refresh)
+                CleanupLegacyGuests(processedDevices);
 
                 // Log device discovery for debugging (only on first refresh or when count changes)
                 _log.Info($"[DeviceDiscovery] Refreshed: {processedDevices.Count} total devices, SelfUserId={_selfUserId}, SelfIp={_selfIpAddress}");
@@ -236,6 +239,47 @@ public class DeviceDiscoveryService
                 guest.LastKnownIp = newIp;
                 _settings.Save(settings);
             }
+        }
+    }
+    
+    /// <summary>
+    /// Cleans up legacy ApprovedGuests entries that have been rediscovered with real NodeIds.
+    /// This prevents duplicate device entries in the UI.
+    /// </summary>
+    private void CleanupLegacyGuests(List<Device> discoveredDevices)
+    {
+        var settings = _settings.Load();
+        var discoveredNodeIds = new HashSet<string>(discoveredDevices.Select(d => d.NodeId), StringComparer.OrdinalIgnoreCase);
+        var toRemove = new List<string>();
+        
+        foreach (var guest in settings.ApprovedGuests.Values)
+        {
+            // Remove legacy_ entries where the real device has been discovered
+            if (guest.NodeId.StartsWith("legacy_"))
+            {
+                // Check if we've discovered a device with the same IP but real NodeId
+                var deviceWithSameIp = discoveredDevices.FirstOrDefault(d => 
+                    d.IpAddress == guest.LastKnownIp && 
+                    !d.NodeId.StartsWith("legacy_") && 
+                    !string.IsNullOrEmpty(d.NodeId));
+                
+                if (deviceWithSameIp != null)
+                {
+                    _log.Info($"[DeviceDiscovery] Removing legacy guest {guest.NodeId} (replaced by {deviceWithSameIp.NodeId})");
+                    toRemove.Add(guest.NodeId);
+                }
+            }
+        }
+        
+        foreach (var nodeId in toRemove)
+        {
+            settings.ApprovedGuests.Remove(nodeId);
+            _log.Info($"[DeviceDiscovery] Removed legacy guest entry: {nodeId}");
+        }
+        
+        if (toRemove.Count > 0)
+        {
+            _settings.Save(settings);
         }
     }
 

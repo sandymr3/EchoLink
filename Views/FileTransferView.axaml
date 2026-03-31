@@ -26,7 +26,7 @@
                     <Grid ColumnDefinitions="*,Auto,Auto">
                         <TextBlock Grid.Column="0" Text="Target Device"
                                    FontSize="13" Foreground="#B3B3B3" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding LoadDevicesCommand}"
+                        <Button Grid.Column="1" Content="↻ Refresh" Command="{Binding RefreshCommand}"
                                 Classes="Nav" Background="Transparent" Foreground="#3273F6"
                                 Padding="6,2" FontSize="12" Margin="0,0,8,0"/>
                         <Button Grid.Column="2" Content="📂 Browse Remote"

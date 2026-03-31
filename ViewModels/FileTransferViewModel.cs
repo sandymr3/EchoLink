@@ -78,12 +78,38 @@ public partial class FileTransferViewModel : ViewModelBase
             // Use DeviceDiscoveryService to get only paired + online devices
             // This ensures File Transfer only shows devices from same account or explicitly paired
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
-            
+
             UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {
             _log.Error($"[FileTransfer] Load devices failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        // Save current selection
+        var currentSelectedNodeId = SelectedTarget?.NodeId;
+        
+        // Trigger dashboard to refresh device list
+        await DeviceDiscoveryService.Instance.RefreshAsync();
+        
+        // Reload devices
+        await LoadDevicesAsync();
+        
+        // Re-select the same device if still available
+        if (!string.IsNullOrEmpty(currentSelectedNodeId))
+        {
+            SelectedTarget = OnlineDevices.FirstOrDefault(d => d.NodeId == currentSelectedNodeId) 
+                            ?? OnlineDevices.FirstOrDefault();
+            
+            // Reset pairing status for reselected device
+            if (SelectedTarget != null)
+            {
+                NeedsPairing = !IsTargetPaired(SelectedTarget);
+            }
         }
     }
 

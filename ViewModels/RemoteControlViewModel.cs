@@ -93,12 +93,32 @@ public partial class RemoteControlViewModel : ViewModelBase
             // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
-            
+
             UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {
             _log.Error($"[RemoteControl] Failed to load devices: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        // Save current selection
+        var currentSelectedNodeId = SelectedTarget?.NodeId;
+        
+        // Trigger dashboard to refresh device list
+        await DeviceDiscoveryService.Instance.RefreshAsync();
+        
+        // Reload devices
+        await LoadDevicesAsync();
+        
+        // Re-select the same device if still available
+        if (!string.IsNullOrEmpty(currentSelectedNodeId))
+        {
+            SelectedTarget = OnlineDevices.FirstOrDefault(d => d.NodeId == currentSelectedNodeId) 
+                            ?? OnlineDevices.FirstOrDefault();
         }
     }
 
@@ -503,12 +523,43 @@ public partial class RemoteControlViewModel : ViewModelBase
     [RelayCommand]
     private async Task ShutdownAsync() => await SendCommandAsync("Shutdown");
 
+    [RelayCommand]
+    private async Task SendLeftClickAsync() => await SendMouseClickAsync(0);
+
+    [RelayCommand]
+    private async Task SendRightClickAsync() => await SendMouseClickAsync(1);
+
+    [RelayCommand]
+    private async Task SendMiddleClickAsync() => await SendMouseClickAsync(2);
+
     private async Task SendCommandAsync(string action)
     {
         _log.Info($"Sending RC command: {action}");
         if (SelectedTarget != null)
         {
             await RemoteControlService.Instance.SendCommandAsync(action);
+        }
+    }
+
+    private async Task SendMouseClickAsync(byte button)
+    {
+        if (SelectedTarget == null)
+        {
+            _log.Warning("[RemoteControl] No target selected for mouse click");
+            return;
+        }
+
+        try
+        {
+            // Send click down then up
+            await UnifiedProtocolClient.Instance.SendMouseClickAsync(button, 1, CancellationToken.None);
+            await Task.Delay(100);
+            await UnifiedProtocolClient.Instance.SendMouseClickAsync(button, 0, CancellationToken.None);
+            _log.Debug($"[RemoteControl] Sent mouse click {button}");
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[RemoteControl] Mouse click failed: {ex.Message}");
         }
     }
 
@@ -520,6 +571,9 @@ public partial class RemoteControlViewModel : ViewModelBase
         _lastX       = x;
         _lastY       = y;
         TrackpadStatus = "Pointer pressed";
+        
+        // Send left click on trackpad press
+        _ = SendMouseClickAsync(0);
     }
 
     public void OnPointerMoved(double x, double y)
@@ -546,5 +600,23 @@ public partial class RemoteControlViewModel : ViewModelBase
     {
         _isDragging    = false;
         TrackpadStatus = SelectedTarget != null ? "Connected" : "Disconnected";
+        
+        // Send left click release on trackpad release
+        _ = SendMouseClickReleaseAsync(0);
+    }
+    
+    private async Task SendMouseClickReleaseAsync(byte button)
+    {
+        if (SelectedTarget == null || !UnifiedProtocolClient.Instance.IsConnected)
+            return;
+        
+        try
+        {
+            await UnifiedProtocolClient.Instance.SendMouseClickAsync(button, 0, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[RemoteControl] Mouse release failed: {ex.Message}");
+        }
     }
 }

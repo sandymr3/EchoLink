@@ -12,6 +12,7 @@ static inline void android_log(const char* msg) {
 */
 import "C"
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -143,6 +144,7 @@ func StartEchoLinkNode(configDir *C.char, authKey *C.char, hostname *C.char, loc
 			internalState = "Running"
 			go startSocks5Proxy()
 			go startPairingForwarder()
+			go startPairingListener()
 			go startInternalSshServer()
 			go startUnifiedAppForwarder()
 		} else {
@@ -330,6 +332,8 @@ func startPairingForwarder() {
 		log.Printf("[Pairing] Failed to listen on mesh: %v", err)
 		return
 	}
+	log.Printf("[Pairing] Mesh forwarder listening on :44444")
+	
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -339,6 +343,7 @@ func startPairingForwarder() {
 			defer c.Close()
 			local, err := net.Dial("tcp", "127.0.0.1:44444")
 			if err != nil {
+				log.Printf("[Pairing] Failed to connect to local listener: %v", err)
 				return
 			}
 			defer local.Close()
@@ -346,6 +351,115 @@ func startPairingForwarder() {
 			io.Copy(c, local)
 		}(conn)
 	}
+}
+
+// startPairingListener listens on localhost:44444 for incoming pairing requests
+// and handles the key exchange protocol
+func startPairingListener() {
+	ln, err := net.Listen("tcp", "127.0.0.1:44444")
+	if err != nil {
+		log.Printf("[Pairing] Failed to listen locally: %v", err)
+		return
+	}
+	log.Printf("[Pairing] Local listener started on 127.0.0.1:44444")
+	
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go handlePairingConnection(conn)
+	}
+}
+
+// handlePairingConnection handles the SSH key exchange protocol for pairing
+func handlePairingConnection(conn net.Conn) {
+	defer conn.Close()
+	
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	defer writer.Flush()
+	
+	// Read incoming pairing request
+	payload, err := reader.ReadString('\n')
+	if err != nil {
+		log.Printf("[Pairing] Failed to read payload: %v", err)
+		return
+	}
+	payload = strings.TrimSpace(payload)
+	
+	log.Printf("[Pairing] Received: %s", payload)
+	
+	// Check for PAIRING_COMPLETE message
+	if strings.HasPrefix(payload, "PAIRING_COMPLETE") {
+		handshakeParts := strings.Split(payload, "|||")
+		if len(handshakeParts) >= 5 {
+			hHostname := handshakeParts[1]
+			hPubKey := handshakeParts[3]
+
+			// Store the public key for SSH authentication
+			SetTempSshPassword(C.CString(hHostname), C.CString(hPubKey))
+
+			log.Printf("[Pairing] Bidirectional pairing confirmed with %s", hHostname)
+		}
+		return
+	}
+	
+	// Parse pairing request: "HOSTNAME|||USERNAME|||IP|||PUBLIC_KEY|||NODE_ID"
+	parts := strings.Split(payload, "|||")
+	if len(parts) < 4 {
+		log.Printf("[Pairing] Invalid payload format")
+		writer.WriteString("REJECTED: Invalid format\n")
+		return
+	}
+	
+	hostname := parts[0]
+	publicKey := strings.TrimSpace(parts[3])
+
+	// Validate key format
+	if !strings.HasPrefix(publicKey, "ssh-ed25519") && !strings.HasPrefix(publicKey, "ssh-rsa") {
+		log.Printf("[Pairing] Invalid key format")
+		writer.WriteString("REJECTED: Invalid key format\n")
+		return
+	}
+	
+	// For Android, we auto-accept pairing (in production, this should show a UI prompt)
+	// Store the public key for SSH authentication
+	SetTempSshPassword(C.CString(hostname), C.CString(publicKey))
+	
+	// Get our device info for response
+	myHostname := tsServer.Hostname
+	myPubKey := getLocalPublicKey()
+	myNodeId := getLocalNodeId()
+	
+	// Send acceptance response
+	response := fmt.Sprintf("ACCEPTED|||%s|||%s|||%s\n", myHostname, myPubKey, myNodeId)
+	writer.WriteString(response)
+	log.Printf("[Pairing] Accepted pairing with %s", hostname)
+}
+
+// getLocalPublicKey returns the local SSH public key
+func getLocalPublicKey() string {
+	// Read from the default key location
+	keyPath := os.Getenv("HOME") + "/.ssh/echolink_ed25519.pub"
+	if content, err := os.ReadFile(keyPath); err == nil {
+		return strings.TrimSpace(string(content))
+	}
+	// Fallback to RSA key for Android
+	keyPath = os.Getenv("HOME") + "/.ssh/echolink_ed25519.pub"
+	if content, err := os.ReadFile(keyPath); err == nil {
+		return strings.TrimSpace(string(content))
+	}
+	return ""
+}
+
+// getLocalNodeId returns the local device NodeId
+func getLocalNodeId() string {
+	status, err := getStatus()
+	if err != nil || status == nil || status.Self == nil {
+		return ""
+	}
+	return string(status.Self.ID)  // StableNodeID converts directly to string
 }
 
 func sftpHandler(sess ssh.Session) {

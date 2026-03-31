@@ -84,12 +84,32 @@ public partial class SystemMonitorViewModel : ViewModelBase, IDisposable
             // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
-            
+
             UpdateDeviceCollection(OnlineDevices, devices);
         }
         catch (Exception ex)
         {
             _log.Error($"[SysMonitor] Load devices failed: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        // Save current selection
+        var currentSelectedNodeId = SelectedDevice?.NodeId;
+        
+        // Trigger dashboard to refresh device list
+        await DeviceDiscoveryService.Instance.RefreshAsync();
+        
+        // Reload devices
+        await LoadDevicesAsync();
+        
+        // Re-select the same device if still available
+        if (!string.IsNullOrEmpty(currentSelectedNodeId))
+        {
+            SelectedDevice = OnlineDevices.FirstOrDefault(d => d.NodeId == currentSelectedNodeId) 
+                            ?? OnlineDevices.FirstOrDefault();
         }
     }
 

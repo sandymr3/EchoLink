@@ -103,14 +103,14 @@ public partial class MacrosViewModel : ViewModelBase
             // Get feature target devices from DeviceDiscoveryService (already filtered and cached)
             // Dashboard controls the actual RefreshAsync call
             var devices = DeviceDiscoveryService.Instance.GetFeatureTargetDevices();
-            
+
             var allTargets = new List<Device>();
 
             // Include self + all online eligible peers
             var selfDevice = DeviceDiscoveryService.Instance.GetSelfDevice();
             if (selfDevice != null)
                 allTargets.Add(selfDevice);
-                
+
             allTargets.AddRange(devices);
 
             UpdateDeviceCollection(OnlineDevices, allTargets);
@@ -119,6 +119,19 @@ public partial class MacrosViewModel : ViewModelBase
         {
             _log.Error($"[Macros] Load devices failed: {ex.Message}");
         }
+    }
+
+    [RelayCommand]
+    private async Task RefreshAsync()
+    {
+        // Macros doesn't have a selected target device like other features
+        // Just refresh the device list
+        
+        // Trigger dashboard to refresh device list
+        await DeviceDiscoveryService.Instance.RefreshAsync();
+        
+        // Reload devices
+        await LoadDevicesAsync();
     }
 
     // ── Inline editor ────────────────────────────────────────────────────
